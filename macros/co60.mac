@@ -1,0 +1,18 @@
+# Co-60: 1.17 MeV
+/run/initialize
+/cuts/setLowEdge 10 eV
+/event/modulo 5000
+
+/gps/particle gamma
+/gps/energy 1.17 MeV
+/gps/type Plane
+/gps/shape Circle
+/gps/radius 1 mm
+/gps/ang/type iso
+/gps/position 0 0 -5 mm
+
+/run/beamOn 25000
+
+# Co-60: 1.33 MeV
+/gps/energy 1.33 MeV
+/run/beamOn 25000

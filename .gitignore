@@ -1,0 +1,32 @@
+# Build directories
+build/
+cmake-build-debug/
+CMakeFiles/
+Makefile
+cmake_install.cmake
+install_manifest.txt
+
+# Executables
+fiber_sim
+a.out
+
+# Log & output files
+*.log
+*.out
+*.txt
+!geant4-v11.3.2.tar.gz      # Keep this!
+dose_per_step.txt           # Exclude output
+
+# IDE & editor files
+.vscode/
+.idea/
+*.swp
+*~
+.DS_Store
+
+# Docker intermediate containers
+.dockerignore
+
+# OS files
+Thumbs.db
+Desktop.ini

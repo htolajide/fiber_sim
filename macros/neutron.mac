@@ -1,0 +1,17 @@
+# Thermal neutron: 0.025 eV
+/run/initialize
+/cuts/setLowEdge 10 eV
+/event/modulo 5000
+
+/process/had/Verbosity 0
+/process/em/deexcitation Ignore
+
+/gps/particle neutron
+/gps/energy 0.025 eV
+/gps/type Plane
+/gps/shape Circle
+/gps/radius 1 mm
+/gps/ang/type iso
+/gps/position 0 0 -5 mm
+
+/run/beamOn 50000

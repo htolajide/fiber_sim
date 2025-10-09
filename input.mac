@@ -1,0 +1,10 @@
+/run/initialize
+cuts/setLowEdge 10 eV
+/gps/type Plane
+/gps/shape Circle
+/gps/radius 1 mm
+/gps/ang/type iso
+/gps/position 0 0 -5 mm
+/gps/particle gamma
+/gps/energy 662 keV
+/run/beamOn 50000

@@ -1,0 +1,58 @@
+{
+  "G4_SILICON_DIOXIDE": {
+    "name": "Fused Silica",
+    "density_g_cm3": 2.20,
+    "formula": "SiO2",
+    "category": "Base Material"
+  },
+  "G4_AIR": {
+    "name": "Air",
+    "density_g_cm3": 0.001205,
+    "formula": "N2/O2",
+    "category": "Gas"
+  },
+  "TiO2": {
+    "name": "Titanium Dioxide",
+    "density_g_cm3": 4.23,
+    "formula": "TiO2",
+    "category": "Dielectric Coating",
+    "bandgap_eV": 3.2,
+    "refractive_index": 2.4
+  },
+  "Gd2O3": {
+    "name": "Gadolinium Oxide",
+    "density_g_cm3": 7.41,
+    "formula": "Gd2O3",
+    "category": "Neutron-Sensitive Coating",
+    "neutron_capture_barns": 254000,
+    "refractive_index": 1.9
+  },
+  "Al2O3": {
+    "name": "Aluminum Oxide",
+    "density_g_cm3": 3.97,
+    "formula": "Al2O3",
+    "category": "Dielectric Coating",
+    "refractive_index": 1.76
+  },
+  "ZrO2": {
+    "name": "Zirconium Dioxide",
+    "density_g_cm3": 5.68,
+    "formula": "ZrO2",
+    "category": "High-Index Coating",
+    "refractive_index": 2.1
+  },
+  "HfO2": {
+    "name": "Hafnium Dioxide",
+    "density_g_cm3": 9.68,
+    "formula": "HfO2",
+    "category": "High-Density Coating",
+    "refractive_index": 2.0
+  },
+  "SiO2_solgel": {
+    "name": "Sol-Gel Silica",
+    "density_g_cm3": 2.0,
+    "formula": "SiO2",
+    "category": "Low-Temp Coating",
+    "refractive_index": 1.45
+  }
+}
