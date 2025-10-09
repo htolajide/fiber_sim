@@ -113,6 +113,7 @@ class FiberSimulationUI(QMainWindow):
         layout = QVBoxLayout()
         tabs = QTabWidget()
         tabs.addTab(self.create_input_tab(), "Sensor Configuration") 
+        tabs.addTab(self.create_output_tab(), "Results & Visualization")  #
         layout.addWidget(tabs)
         self.setCentralWidget(container)
         container.setLayout(layout)
@@ -156,7 +157,9 @@ class FiberSimulationUI(QMainWindow):
         btn_add = QPushButton("➕ Add Layer"); btn_add.clicked.connect(self.add_layer_row)
         btn_clear = QPushButton("🗑️ Clear All"); btn_clear.clicked.connect(self.clear_layers)
         btn_reset = QPushButton("↺ Reset Default"); btn_reset.clicked.connect(self.default_layers)
-        hlay_btns.addWidget(btn_add); hlay_btns.addWidget(btn_clear); hlay_btns.addWidget(btn_reset)
+        btn_dual = QPushButton("⚡ Add TiO₂ + Gd₂O₃ Coating")
+        btn_dual.clicked.connect(self.add_dual_coating)
+        hlay_btns.addWidget(btn_add); hlay_btns.addWidget(btn_dual); hlay_btns.addWidget(btn_clear); hlay_btns.addWidget(btn_reset)
         layout.addLayout(hlay_btns)
 
         # =======================
@@ -226,6 +229,27 @@ class FiberSimulationUI(QMainWindow):
         self.log.append("✅ Ready to simulate!")
         layout.addWidget(self.log)
         self.default_layers()
+        widget.setLayout(layout)
+        return widget
+    
+    def create_output_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # Plot canvas
+        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        layout.addWidget(self.canvas)
+
+        # Export buttons
+        hlay = QHBoxLayout()
+        btn_export_csv = QPushButton("💾 Export Dose Data (CSV)")
+        btn_export_csv.clicked.connect(self.export_results_csv)
+        btn_export_plot = QPushButton("📊 Export Plot (PNG)")
+        btn_export_plot.clicked.connect(self.export_plot)
+        hlay.addWidget(btn_export_csv)
+        hlay.addWidget(btn_export_plot)
+        layout.addLayout(hlay)
+
         widget.setLayout(layout)
         return widget
 
@@ -407,14 +431,19 @@ class FiberSimulationUI(QMainWindow):
             out_dir = self.output_folder.text()
             os.makedirs(out_dir, exist_ok=True)
 
-            # Generate geometry.mac
+             # Generate geometry.mac
             geo_file = os.path.join(out_dir, "geometry.mac")
             with open(geo_file, 'w') as f:
                 for i in range(self.layer_table.rowCount()):
-                    w = lambda j: self.layer_table.cellWidget(i, j).text()
-                    name, mat, ir, orad, L = w(0), w(1), w(2), w(3), w(4)
+                    w = lambda j: self.layer_table.cellWidget(i, j)
+                    name = w(0).text()
+                    mat = w(1).currentText()  # 🔧 QComboBox → currentText()
+                    ir = w(2).text()
+                    orad = w(3).text()
+                    L = w(4).text()
                     f.write(f"/detector/config/addLayer {name} {mat} {ir} {orad} {L}\n")
             self.log.append("✅ Generated geometry.mac")
+
 
             # Generate radiation macro
             src = self.source_type.currentText()
@@ -442,7 +471,7 @@ class FiberSimulationUI(QMainWindow):
                 "-v", f"{os.getcwd()}:/home/geant4/work",
                 "my-geant4",
                 "/bin/bash", "-c",
-                "cd /home/geant4/work/build || mkdir -p build && "
+                "cd /home/geant4/work && mkdir -p build && "
                 "cd build && "
                 "if [ ! -f CMakeCache.txt ]; then cmake ..; fi && "
                 "make -j8"
