@@ -94,9 +94,18 @@ class FiberSimulationUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Dual-Layer Coated Fiber FPI Simulator")
-        self.setGeometry(100, 100, 1100, 800)
+        self.setGeometry(200, 200, 1100, 1000)
         self.dose_data = None
         self.material_db = MaterialDB()
+
+        # ✅ Initialize log early
+        self.output_folder = None  # will be set in create_source_tab
+        self.source_type = None
+        self.num_particles = None
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.append("✅ Ready to simulate! Configure geometry and source.")
+
         self.init_ui()
 
     def init_ui(self):
@@ -168,6 +177,31 @@ class FiberSimulationUI(QMainWindow):
         hlay_io.addWidget(btn_save); hlay_io.addWidget(btn_load)
         layout.addLayout(hlay_io)
 
+        # --- Save/Load Geometry ---
+        hlay_io = QHBoxLayout()
+        btn_save = QPushButton("💾 Save Geometry")
+        btn_save.clicked.connect(self.save_geometry)
+        btn_load = QPushButton("📁 Load Geometry")
+        btn_load.clicked.connect(self.load_geometry)
+        hlay_io.addWidget(btn_save)
+        hlay_io.addWidget(btn_load)
+        #layout.addLayout(hlay_io)
+
+        # --- Run Simulation Button (MUST BE HERE) ---
+        btn_run = QPushButton("🚀 Run Simulation")
+        btn_run.setStyleSheet("font-size: 14px; font-weight: bold; padding: 12px;")
+        btn_run.clicked.connect(self.run_simulation)
+        layout.addWidget(btn_run)  # ← Critical: must be added!
+
+        # --- Log Console ---
+        # Log console (already created in __init__)
+        layout.addWidget(self.log)
+
+        # Initialize
+        self.default_layers()
+        widget.setLayout(layout)
+        return widget
+
         # Initialize
         self.default_layers()
         widget.setLayout(layout)
@@ -176,16 +210,32 @@ class FiberSimulationUI(QMainWindow):
     def add_layer_row(self, name="", mat="", ir="", orad="", length="5.0"):
         row = self.layer_table.rowCount()
         self.layer_table.insertRow(row)
+
+        # 🔧 Ensure all values are strings
+        name = str(name) if name is not None else ""
+        mat = str(mat) if mat is not None else ""
+        ir = str(ir) if ir is not None else ""
+        orad = str(orad) if orad is not None else ""
+        length = str(length) if length is not None else "5.0"
+
+        # Name
         name_w = QLineEdit(name)
         self.layer_table.setCellWidget(row, 0, name_w)
+
+        # Material (dropdown)
         mat_combo = QComboBox()
         mat_combo.addItems(self.material_db.list_materials())
         idx = mat_combo.findText(mat)
-        if idx >= 0: mat_combo.setCurrentIndex(idx)
+        if idx >= 0:
+            mat_combo.setCurrentIndex(idx)
         self.layer_table.setCellWidget(row, 1, mat_combo)
+
+        # Other fields
         for col, val in enumerate([ir, orad, length], start=2):
-            item = QLineEdit(val)
+            item = QLineEdit(str(val))  # 🔒 Force to string
             self.layer_table.setCellWidget(row, col, item)
+
+        # Update preview
         self.update_preview()
 
     def clear_layers(self):
@@ -197,8 +247,8 @@ class FiberSimulationUI(QMainWindow):
         if self.sensor_type.currentText() == "Micro-Cavity FPI":
             self.add_layer_row("Core", "G4_SILICON_DIOXIDE", "0", "4.1", "5.0")
             self.add_layer_row("Cladding", "G4_SILICON_DIOXIDE", "4.1", "75.0", "5.0")
-            self.add_layer_row("Spacer", "G4_SILICON_DIOXIDE", "75.0", "80.0", "0.01")
-            self.add_layer_row("Cavity", "G4_AIR", "80.0", "85.0", "0.005")
+            self.add_layer_row("Spacer", "G4_SILICON_DIOXIDE", "75.0", "80.0", "0.01")   # ← string!
+            self.add_layer_row("Cavity", "G4_AIR", "80.0", "85.0", "0.005")              # ← string!
         else:
             self.add_layer_row("Core", "G4_SILICON_DIOXIDE", "0", "4.1", "5.0")
             self.add_layer_row("Cladding", "G4_SILICON_DIOXIDE", "4.1", "75.0", "5.0")
@@ -230,6 +280,7 @@ class FiberSimulationUI(QMainWindow):
         self.add_layer_row("TiO2_Coating", "TiO2", f"{base_radius:.3f}", f"{ti_outer:.3f}", "5.0")
         self.add_layer_row("Gd2O3_Coating", "Gd2O3", f"{ti_outer:.3f}", f"{gd_outer:.3f}", "5.0")
 
+        # ✅ Now safe to use self.log
         self.log.append("✅ Added TiO₂ (100 nm) + Gd₂O₃ (200 nm) dual-layer coating.")
         self.update_preview()
 
@@ -265,20 +316,38 @@ class FiberSimulationUI(QMainWindow):
     def save_geometry(self):
         filename, _ = QFileDialog.getSaveFileName(self, "Save Geometry", "", "JSON Files (*.json)")
         if not filename: return
+
         data = []
         for i in range(self.layer_table.rowCount()):
-            w = lambda j: self.layer_table.cellWidget(i, j).text()
-            data.append({
-                "name": w(0),
-                "material": w(1),
-                "inner_rad_um": w(2),
-                "outer_rad_um": w(3),
-                "length_mm": w(4)
-            })
+            row = {}
+
+            # Column 0: Name (QLineEdit)
+            name_widget = self.layer_table.cellWidget(i, 0)
+            row["name"] = name_widget.text() if name_widget else ""
+
+            # Column 1: Material (QComboBox)
+            mat_widget = self.layer_table.cellWidget(i, 1)
+            row["material"] = mat_widget.currentText() if mat_widget else ""
+
+            # Columns 2–4: Numbers (QLineEdit)
+            try:
+                row["inner_rad_um"] = float(self.layer_table.cellWidget(i, 2).text())
+            except:
+                row["inner_rad_um"] = 0.0
+            try:
+                row["outer_rad_um"] = float(self.layer_table.cellWidget(i, 3).text())
+            except:
+                row["outer_rad_um"] = 0.0
+            try:
+                row["length_mm"] = float(self.layer_table.cellWidget(i, 4).text())
+            except:
+                row["length_mm"] = 5.0
+
+            data.append(row)
+
         with open(filename, 'w') as f:
             json.dump(data, f, indent=2)
-        self.log.append(f"💾 Saved geometry to {filename}")
-        self.update_preview()
+        self.log.append(f"✅ Saved geometry to: {filename}")
 
     def load_geometry(self):
         filename, _ = QFileDialog.getOpenFileName(self, "Load Geometry", "", "JSON Files (*.json)")
@@ -289,11 +358,13 @@ class FiberSimulationUI(QMainWindow):
             self.clear_layers()
             for d in data:
                 self.add_layer_row(
-                    d["name"], d["material"],
-                    d["inner_rad_um"], d["outer_rad_um"],
-                    d["length_mm"]
+                    str(d.get("name", "")),
+                    str(d.get("material", "")),
+                    str(d.get("inner_rad_um", "0")),
+                    str(d.get("outer_rad_um", "0")),
+                    str(d.get("length_mm", "5.0"))
                 )
-            self.log.append(f"📂 Loaded geometry from {filename}")
+            self.log.append(f"📂 Loaded geometry from: {filename}")
             self.update_preview()
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load geometry:\n{str(e)}")
@@ -382,22 +453,6 @@ class FiberSimulationUI(QMainWindow):
         except Exception as e:
             self.log.append(f"💥 Error: {str(e)}")
             QMessageBox.critical(self, "Error", str(e))
-
-    def create_source_tab(self):
-        widget = QWidget()
-        layout = QFormLayout()
-        self.source_type = QComboBox()
-        self.source_type.addItems(["Cs-137 (662 keV)", "Co-60", "Thermal Neutron"])
-        layout.addRow("Radiation Source", self.source_type)
-        self.num_particles = QLineEdit("50000")
-        layout.addRow("Number of Particles", self.num_particles)
-        self.output_folder = QLineEdit(os.getcwd())
-        btn_browse = QPushButton("Browse...")
-        btn_browse.clicked.connect(self.browse_folder)
-        hlay = QHBoxLayout(); hlay.addWidget(self.output_folder); hlay.addWidget(btn_browse)
-        layout.addRow("Output Folder", hlay)
-        widget.setLayout(layout)
-        return widget
 
     def browse_folder(self):
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
