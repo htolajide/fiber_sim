@@ -1,4 +1,2 @@
 /detector/config/addLayer Core G4_SILICON_DIOXIDE 0 4.1 5.0
 /detector/config/addLayer Cladding G4_SILICON_DIOXIDE 4.1 75.0 5.0
-/detector/config/addLayer TiO2_Coating TiO2 75.000 75.100 5.0
-/detector/config/addLayer Gd2O3_Coating Gd2O3 75.100 75.300 5.0

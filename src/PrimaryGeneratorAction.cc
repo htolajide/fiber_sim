@@ -1,6 +1,7 @@
 #include "G4VUserPrimaryGeneratorAction.hh"
 #include "G4GeneralParticleSource.hh"
 #include "G4Event.hh"
+#include "G4SystemOfUnits.hh" 
 
 class PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction {
 private:

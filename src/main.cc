@@ -2,6 +2,7 @@
 #include "G4UImanager.hh"
 #include "G4VisExecutive.hh"
 #include "G4UIExecutive.hh"
+#include "G4SystemOfUnits.hh" 
 
 #include "G4EmStandardPhysics_option4.hh"
 #include "G4HadronPhysicsQGSP_BERT_HP.hh"
