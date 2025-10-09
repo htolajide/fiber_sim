@@ -1,6 +1,5 @@
 // DetectorConstruction.cc
-// Flexible multilayer fiber FPI sensor for radiation simulation
-// Supports core, cladding, coatings (e.g., TiO2 + Gd2O3), micro-cavities
+// Implementation of DetectorConstruction class for multilayer fiber FPI
 
 #include "DetectorConstruction.hh"
 
@@ -64,36 +63,10 @@ G4Material* CreateCustomMaterial(const G4String& name) {
     return nullptr;
 }
 
-// Structure to hold layer parameters
-struct Layer {
-    G4String name;
-    G4double innerRadius, outerRadius;
-    G4double length;
-    G4String materialName;
-    G4Material* material;
-
-    Layer() : material(nullptr) {}
-};
-
-class DetectorConstruction : public G4VUserDetectorConstruction {
-private:
-    std::vector<Layer> layers;
-    G4double fiberLength;
-    G4GenericMessenger* fMessenger;
-
-    void DefineCommands();
-    void BuildLayers();
-
-public:
-    DetectorConstruction();
-    virtual ~DetectorConstruction() override = default;
-    virtual G4VPhysicalVolume* Construct() override;
-};
-
+// Default constructor
 DetectorConstruction::DetectorConstruction()
-    : fiberLength(5.*mm)
+    : fiberLength(5.*mm), fMessenger(nullptr)
 {
-    // Default layers (can be overridden via commands)
     Layer core = {"Core", 0, 4.1*um, fiberLength, "G4_SILICON_DIOXIDE", nullptr};
     Layer clad = {"Cladding", 4.1*um, 75*um, fiberLength, "G4_SILICON_DIOXIDE", nullptr};
 
@@ -108,10 +81,9 @@ void DetectorConstruction::DefineCommands() {
 
     auto& addLayerCmd = *fMessenger->DeclareMethod("addLayer",
         [this](G4String params) {
-            // Format: name mat inRad outRad [length]
             std::istringstream is(params);
             G4String name, matName;
-            G4double inRad, outRad, len = fiberLength/mm; // default to fiberLength
+            G4double inRad, outRad, len = fiberLength/mm;
             is >> name >> matName >> inRad >> outRad >> len;
             inRad *= um; outRad *= um; len *= mm;
 
@@ -122,7 +94,6 @@ void DetectorConstruction::DefineCommands() {
             lyr.outerRadius = outRad;
             lyr.length = len;
 
-            // Try NIST first, then custom
             G4NistManager* nist = G4NistManager::Instance();
             lyr.material = nist->FindOrBuildMaterial(matName);
             if (!lyr.material) {
@@ -142,27 +113,25 @@ void DetectorConstruction::DefineCommands() {
 
     addLayerCmd.SetParameterName("params", false);
     addLayerCmd.SetDescription(
-        "Add a cylindrical layer: name mat inRad(um) outRad(um) len(mm)\n"
-        "Example: /detector/config/addLayer Coating TiO2 75.0 75.1 5.0"
+        "Add a cylindrical layer: name mat inRad(um) outRad(um) len(mm)"
     );
 
     fMessenger->DeclareProperty("fiberLength", fiberLength, "Fiber length in mm");
-    fiberLength /= mm; fiberLength *= mm; // reset unit
+    fiberLength /= mm; fiberLength *= mm;
 }
 
 void DetectorConstruction::BuildLayers() {
     G4NistManager* nist = G4NistManager::Instance();
 
     for (auto& layer : layers) {
-        if (layer.material) continue; // already set
-
+        if (layer.material) continue;
         layer.material = nist->FindOrBuildMaterial(layer.materialName);
         if (!layer.material) {
             layer.material = CreateCustomMaterial(layer.materialName);
         }
         if (!layer.material) {
             G4cerr << "⚠️ Material not found: " << layer.materialName << G4endl;
-            layer.material = nist->FindOrBuildMaterial("G4_AIR"); // fallback
+            layer.material = nist->FindOrBuildMaterial("G4_AIR");
         }
     }
 }
@@ -170,7 +139,6 @@ void DetectorConstruction::BuildLayers() {
 G4VPhysicalVolume* DetectorConstruction::Construct() {
     G4NistManager* nist = G4NistManager::Instance();
 
-    // World volume
     G4double world_size = 1.*cm;
     G4Box* solidWorld = new G4Box("World", world_size, world_size, world_size);
     G4LogicalVolume* logicWorld = new G4LogicalVolume(solidWorld, nist->FindOrBuildMaterial("G4_AIR"), "World");
@@ -178,15 +146,9 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
 
     BuildLayers();
 
-    // Build all layers in order
     for (size_t i = 0; i < layers.size(); ++i) {
         const Layer& lyr = layers[i];
-
-        // Check validity
-        if (lyr.outerRadius <= lyr.innerRadius) {
-            G4cerr << "Invalid radii for layer " << lyr.name << G4endl;
-            continue;
-        }
+        if (lyr.outerRadius <= lyr.innerRadius) continue;
 
         G4Tubs* tub = new G4Tubs(lyr.name, lyr.innerRadius, lyr.outerRadius, lyr.length/2., 0, 360*deg);
         G4LogicalVolume* logVol = new G4LogicalVolume(tub, lyr.material, lyr.name);
