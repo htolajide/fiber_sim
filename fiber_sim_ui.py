@@ -112,8 +112,7 @@ class FiberSimulationUI(QMainWindow):
         container = QWidget()
         layout = QVBoxLayout()
         tabs = QTabWidget()
-        tabs.addTab(self.create_input_tab(), "Sensor Configuration")
-        tabs.addTab(self.create_output_tab(), "Results & Visualization")
+        tabs.addTab(self.create_input_tab(), "Sensor Configuration") 
         layout.addWidget(tabs)
         self.setCentralWidget(container)
         container.setLayout(layout)
@@ -122,7 +121,9 @@ class FiberSimulationUI(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        # --- Sensor Type ---
+        # =======================
+        # 1. Sensor Type & Info
+        # =======================
         hlay_type = QHBoxLayout()
         hlay_type.addWidget(QLabel("<b>Sensor Type:</b>"))
         self.sensor_type = QComboBox()
@@ -132,77 +133,98 @@ class FiberSimulationUI(QMainWindow):
         hlay_type.addStretch()
         layout.addLayout(hlay_type)
 
-        # --- Layer Table ---
-        self.layer_table = QTableWidget()
-        self.layer_table.setColumnCount(5)
-        headers = ["Name", "Material", "Inner Rad (μm)", "Outer Rad (μm)", "Length (mm)"]
-        self.layer_table.setHorizontalHeaderLabels(headers)
-        self.layer_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
-        layout.addWidget(self.layer_table)
-
-        # Tooltips
-        mat_tip = "Select material from database. For dual-layer coating:\n1. Add TiO₂ layer\n2. Add Gd₂O₃ on top"
-        self.layer_table.horizontalHeaderItem(1).setToolTip(mat_tip)
-
-        # --- Control Buttons ---
-        hlay_btns = QHBoxLayout()
-        btn_add = QPushButton("➕ Add Layer"); btn_add.clicked.connect(self.add_layer_row)
-        btn_clear = QPushButton("🗑️ Clear All"); btn_clear.clicked.connect(self.clear_layers)
-        btn_dual = QPushButton("⚡ Add TiO₂ + Gd₂O₃ Coating"); btn_dual.clicked.connect(self.add_dual_coating)
-        btn_reset = QPushButton("↺ Reset Default"); btn_reset.clicked.connect(self.default_layers)
-
-        hlay_btns.addWidget(btn_add)
-        hlay_btns.addWidget(btn_clear)
-        hlay_btns.addWidget(btn_dual)
-        hlay_btns.addWidget(btn_reset)
-        layout.addLayout(hlay_btns)
-
-        # Info label
+        # Tip
         info = QLabel(
-            "💡 Layers are stacked radially outward. "
-            "For dual-layer coating: TiO₂ (e.g., 100 nm) → Gd₂O₃ (e.g., 200 nm)"
+            "💡 Layers stack radially outward. Add TiO₂ (e.g., 75.0 → 75.1 μm), then Gd₂O₃ on top."
         )
         info.setStyleSheet("QLabel { font-size: 10px; color: gray; }")
         layout.addWidget(info)
 
-        # --- Geometry Preview ---
-        layout.addWidget(QLabel("<b>Structure Preview (r-z):</b>"))
-        self.preview_canvas = MplCanvas(self)
+        # =======================
+        # 2. Layer Table
+        # =======================
+        self.layer_table = QTableWidget()
+        self.layer_table.setColumnCount(5)
+        self.layer_table.setHorizontalHeaderLabels([
+            "Name", "Material", "Inner Rad (μm)", "Outer Rad (μm)", "Length (mm)"
+        ])
+        self.layer_table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
+        layout.addWidget(self.layer_table)
+
+        # Buttons
+        hlay_btns = QHBoxLayout()
+        btn_add = QPushButton("➕ Add Layer"); btn_add.clicked.connect(self.add_layer_row)
+        btn_clear = QPushButton("🗑️ Clear All"); btn_clear.clicked.connect(self.clear_layers)
+        btn_reset = QPushButton("↺ Reset Default"); btn_reset.clicked.connect(self.default_layers)
+        hlay_btns.addWidget(btn_add); hlay_btns.addWidget(btn_clear); hlay_btns.addWidget(btn_reset)
+        layout.addLayout(hlay_btns)
+
+        # =======================
+        # 3. Geometry Preview
+        # =======================
+        layout.addWidget(QLabel("<b>Structure Preview:</b>"))
+        self.preview_canvas = MplCanvas(self, width=6, height=2, dpi=100)
         layout.addWidget(self.preview_canvas)
 
-        # --- Save/Load ---
+        # =======================
+        # 4. Radiation Source Settings
+        # =======================
+        layout.addWidget(QLabel("<b>Radiation Source:</b>"))
+
+        form = QFormLayout()
+        
+        self.source_type = QComboBox()
+        self.source_type.addItems(["Cs-137 (662 keV)", "Co-60", "Thermal Neutron"])
+        form.addRow("Source:", self.source_type)
+
+        self.num_particles = QLineEdit("50000")
+        form.addRow("Particles:", self.num_particles)
+
+        # Output folder
+        self.output_folder = QLineEdit(os.getcwd())
+        btn_browse = QPushButton("Browse...")
+        btn_browse.clicked.connect(self.browse_folder)
         hlay_io = QHBoxLayout()
+        hlay_io.addWidget(self.output_folder)
+        hlay_io.addWidget(btn_browse)
+        form.addRow("Output Folder:", hlay_io)
+
+        layout.addLayout(form)
+
+        # =======================
+        # 5. Save / Load & Run
+        # =======================
+        hlay_save = QHBoxLayout()
         btn_save = QPushButton("💾 Save Geometry"); btn_save.clicked.connect(self.save_geometry)
         btn_load = QPushButton("📁 Load Geometry"); btn_load.clicked.connect(self.load_geometry)
-        hlay_io.addWidget(btn_save); hlay_io.addWidget(btn_load)
-        layout.addLayout(hlay_io)
+        hlay_save.addWidget(btn_save); hlay_save.addWidget(btn_load)
+        layout.addLayout(hlay_save)
 
-        # --- Save/Load Geometry ---
-        hlay_io = QHBoxLayout()
-        btn_save = QPushButton("💾 Save Geometry")
-        btn_save.clicked.connect(self.save_geometry)
-        btn_load = QPushButton("📁 Load Geometry")
-        btn_load.clicked.connect(self.load_geometry)
-        hlay_io.addWidget(btn_save)
-        hlay_io.addWidget(btn_load)
-        #layout.addLayout(hlay_io)
-
-        # --- Run Simulation Button (MUST BE HERE) ---
-        btn_run = QPushButton("🚀 Run Simulation")
-        btn_run.setStyleSheet("font-size: 14px; font-weight: bold; padding: 12px;")
+        # 🚀 Run Simulation Button (Big and visible!)
+        btn_run = QPushButton("🚀 RUN SIMULATION")
+        btn_run.setStyleSheet("""
+            QPushButton {
+                background-color: #d32f2f;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 12px;
+                border-radius: 6px;
+            }
+            QPushButton:hover {
+                background-color: #b71c1c;
+            }
+        """)
         btn_run.clicked.connect(self.run_simulation)
-        layout.addWidget(btn_run)  # ← Critical: must be added!
+        layout.addWidget(btn_run)
 
-        # --- Log Console ---
-        # Log console (already created in __init__)
+        # =======================
+        # 6. Log Console
+        # =======================
+        self.log = QTextEdit()
+        self.log.setReadOnly(True)
+        self.log.append("✅ Ready to simulate!")
         layout.addWidget(self.log)
-
-        # Initialize
-        self.default_layers()
-        widget.setLayout(layout)
-        return widget
-
-        # Initialize
         self.default_layers()
         widget.setLayout(layout)
         return widget
