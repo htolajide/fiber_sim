@@ -490,6 +490,7 @@ class FiberSimulationUI(QMainWindow):
             run_cmd = [
                 "docker", "run", "--rm",
                 "-v", f"{out_dir}:/home/geant4/work",
+                "-e", "LD_LIBRARY_PATH=/home/geant4/geant4-install/lib",
                 "my-geant4",
                 "/home/geant4/work/build/fiber_sim"
             ]

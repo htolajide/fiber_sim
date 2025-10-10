@@ -1,7 +1,6 @@
 // DetectorConstruction.cc
-// Implementation of DetectorConstruction class for multilayer fiber FPI
-
 #include "DetectorConstruction.hh"
+#include "AddLayerCommand.hh"   // ← After main header
 
 #include "G4RunManager.hh"
 #include "G4NistManager.hh"
@@ -16,108 +15,17 @@
 #include "G4UnitsTable.hh"
 #include "G4Exception.hh"
 
-// Helper: Create non-NIST materials
-G4Material* CreateCustomMaterial(const G4String& name) {
-    G4NistManager* nist = G4NistManager::Instance();
-
-    if (name == "TiO2") {
-        G4double density = 4.23 * g/cm3;
-        G4Material* mat = new G4Material("TiO2", density, 2);
-        mat->AddElement(nist->FindOrBuildElement("Ti"), 1);
-        mat->AddElement(nist->FindOrBuildElement("O"), 2);
-        return mat;
-    }
-
-    if (name == "Gd2O3") {
-        G4double density = 7.41 * g/cm3;
-        G4Material* mat = new G4Material("Gd2O3", density, 2);
-        mat->AddElement(nist->FindOrBuildElement("Gd"), 2);
-        mat->AddElement(nist->FindOrBuildElement("O"), 3);
-        return mat;
-    }
-
-    if (name == "Al2O3") {
-        G4double density = 3.97 * g/cm3;
-        G4Material* mat = new G4Material("Al2O3", density, 2);
-        mat->AddElement(nist->FindOrBuildElement("Al"), 2);
-        mat->AddElement(nist->FindOrBuildElement("O"), 3);
-        return mat;
-    }
-
-    if (name == "ZrO2") {
-        G4double density = 5.68 * g/cm3;
-        G4Material* mat = new G4Material("ZrO2", density, 2);
-        mat->AddElement(nist->FindOrBuildElement("Zr"), 1);
-        mat->AddElement(nist->FindOrBuildElement("O"), 2);
-        return mat;
-    }
-
-    if (name == "HfO2") {
-        G4double density = 9.68 * g/cm3;
-        G4Material* mat = new G4Material("HfO2", density, 2);
-        mat->AddElement(nist->FindOrBuildElement("Hf"), 1);
-        mat->AddElement(nist->FindOrBuildElement("O"), 2);
-        return mat;
-    }
-
-    return nullptr;
-}
-
-// Default constructor
 DetectorConstruction::DetectorConstruction()
-    : fiberLength(5.*mm), fMessenger(nullptr)
+    : fiberLength(5.*mm), addLayerCmd(nullptr)
 {
-    Layer core = {"Core", 0, 4.1*um, fiberLength, "G4_SILICON_DIOXIDE", nullptr};
-    Layer clad = {"Cladding", 4.1*um, 75*um, fiberLength, "G4_SILICON_DIOXIDE", nullptr};
-
-    layers.push_back(core);
-    layers.push_back(clad);
+    layers.emplace_back("Core", 0, 4.1*um, fiberLength, "G4_SILICON_DIOXIDE");
+    layers.emplace_back("Cladding", 4.1*um, 75*um, fiberLength, "G4_SILICON_DIOXIDE");
 
     DefineCommands();
 }
 
 void DetectorConstruction::DefineCommands() {
-    fMessenger = new G4GenericMessenger(this, "/detector/config/", "Detector Configuration");
-
-    auto& addLayerCmd = *fMessenger->DeclareMethod("addLayer",
-        [this](G4String params) {
-            std::istringstream is(params);
-            G4String name, matName;
-            G4double inRad, outRad, len = fiberLength/mm;
-            is >> name >> matName >> inRad >> outRad >> len;
-            inRad *= um; outRad *= um; len *= mm;
-
-            Layer lyr;
-            lyr.name = name;
-            lyr.materialName = matName;
-            lyr.innerRadius = inRad;
-            lyr.outerRadius = outRad;
-            lyr.length = len;
-
-            G4NistManager* nist = G4NistManager::Instance();
-            lyr.material = nist->FindOrBuildMaterial(matName);
-            if (!lyr.material) {
-                lyr.material = CreateCustomMaterial(matName);
-            }
-            if (!lyr.material) {
-                G4ExceptionDescription msg;
-                msg << "Unknown material: " << matName;
-                G4Exception("DetectorConstruction::addLayer", "MatNotFound", JustWarning, msg);
-                return;
-            }
-
-            layers.push_back(lyr);
-            G4cout << "Added layer: " << name << " [" << matName << "] "
-                   << inRad/um << " → " << outRad/um << " μm" << G4endl;
-        });
-
-    addLayerCmd.SetParameterName("params", false);
-    addLayerCmd.SetDescription(
-        "Add a cylindrical layer: name mat inRad(um) outRad(um) len(mm)"
-    );
-
-    fMessenger->DeclareProperty("fiberLength", fiberLength, "Fiber length in mm");
-    fiberLength /= mm; fiberLength *= mm;
+    addLayerCmd = new AddLayerCommand(this);
 }
 
 void DetectorConstruction::BuildLayers() {
@@ -127,13 +35,28 @@ void DetectorConstruction::BuildLayers() {
         if (layer.material) continue;
         layer.material = nist->FindOrBuildMaterial(layer.materialName);
         if (!layer.material) {
-            layer.material = CreateCustomMaterial(layer.materialName);
+            if (layer.materialName == "TiO2") {
+                G4double density = 4.23 * g/cm3;
+                layer.material = new G4Material("TiO2", density, 2);
+                layer.material->AddElement(nist->FindOrBuildElement("Ti"), 1);
+                layer.material->AddElement(nist->FindOrBuildElement("O"), 2);
+            } else if (layer.materialName == "Gd2O3") {
+                G4double density = 7.41 * g/cm3;
+                layer.material = new G4Material("Gd2O3", density, 2);
+                layer.material->AddElement(nist->FindOrBuildElement("Gd"), 2);
+                layer.material->AddElement(nist->FindOrBuildElement("O"), 3);
+            }
         }
         if (!layer.material) {
-            G4cerr << "⚠️ Material not found: " << layer.materialName << G4endl;
+            G4cerr << "⚠️ Material not found: " << layer.materialName << ", using air." << G4endl;
             layer.material = nist->FindOrBuildMaterial("G4_AIR");
         }
     }
+}
+
+void DetectorConstruction::AddLayer(const G4String& name, G4double ir, G4double orad, G4double len,
+                                    const G4String& matName, G4Material* mat) {
+    layers.emplace_back(name, ir, orad, len, matName, mat);
 }
 
 G4VPhysicalVolume* DetectorConstruction::Construct() {
@@ -153,11 +76,10 @@ G4VPhysicalVolume* DetectorConstruction::Construct() {
         G4Tubs* tub = new G4Tubs(lyr.name, lyr.innerRadius, lyr.outerRadius, lyr.length/2., 0, 360*deg);
         G4LogicalVolume* logVol = new G4LogicalVolume(tub, lyr.material, lyr.name);
         new G4PVPlacement(0, G4ThreeVector(), logVol, lyr.name + "_PV", logicWorld, false, 0);
-
-        G4cout << "Built: " << lyr.name 
-               << " (" << lyr.materialName << ") "
-               << lyr.innerRadius/um << " → " << lyr.outerRadius/um << " μm" << G4endl;
     }
 
     return physWorld;
 }
+
+// Add this at the end of the file
+DetectorConstruction::~DetectorConstruction() = default;

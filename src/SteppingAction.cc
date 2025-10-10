@@ -1,25 +1,33 @@
-// SteppingAction.cc - Record energy deposit per step
+// SteppingAction.cc
 #include "G4UserSteppingAction.hh"
 #include "G4Step.hh"
 #include "G4SDManager.hh"
 #include <fstream>
 
-// 🔧 Required for units like um, keV, nm
-#include "G4SystemOfUnits.hh"      // Defines mm, um, keV, MeV, etc.
-#include "G4PhysicalConstants.hh"  // For c_light, pi, etc.
+// Units
+#include "G4SystemOfUnits.hh"
+
+// Forward declare file stream
+extern std::ofstream doseFile;  // Declare external
 
 class SteppingAction : public G4UserSteppingAction {
 public:
     SteppingAction();
+    virtual ~SteppingAction() {
+        if (doseFile.is_open()) {
+            doseFile.close();
+        }
+    }
     virtual void UserSteppingAction(const G4Step*) override;
 };
 
-// Output file
+// Define globally
 std::ofstream doseFile("dose_per_step.txt", std::ios::app);
 
 SteppingAction::SteppingAction() {
-    // Write header
-    doseFile << "# Volume\tX[um]\tY[um]\tZ[um]\tEdep[keV]\tLength[nm]\n";
+    if (doseFile.is_open()) {
+        doseFile << "# Volume\tX[um]\tY[um]\tZ[um]\tEdep[keV]\tLength[nm]\n";
+    }
 }
 
 void SteppingAction::UserSteppingAction(const G4Step* step) {
@@ -30,13 +38,10 @@ void SteppingAction::UserSteppingAction(const G4Step* step) {
     G4String volName = step->GetPreStepPoint()->GetPhysicalVolume()->GetName();
     G4double stepLength = step->GetStepLength();
 
-    // 🔧 Use CLHEP units: um, keV, nm
     doseFile
         << volName << "\t"
-        << pos.x() / um << "\t"   // Position in micrometers
-        << pos.y() / um << "\t"
-        << pos.z() / um << "\t"
-        << edep / keV << "\t"     // Energy in keV
-        << stepLength / nm        // Step length in nanometers
+        << pos.x()/um << "\t" << pos.y()/um << "\t" << pos.z()/um << "\t"
+        << edep/keV << "\t"
+        << stepLength/nm
         << "\n";
 }
