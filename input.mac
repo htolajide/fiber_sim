@@ -1,10 +1,12 @@
+# Radiation Source Configuration
 /run/initialize
-cuts/setLowEdge 10 eV
-/gps/type Plane
-/gps/shape Circle
-/gps/radius 1 mm
+
+/gps/pos/type Plane
+/gps/pos/shape Circle
+/gps/pos/centre 0 0 -2.500 mm
+/gps/pos/radius 75.0 um
 /gps/ang/type iso
-/gps/position 0 0 -5 mm
+
 /gps/particle gamma
 /gps/energy 662 keV
 /run/beamOn 50000

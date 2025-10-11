@@ -1,7 +1,7 @@
+// PrimaryGeneratorAction.cc
 #include "G4VUserPrimaryGeneratorAction.hh"
 #include "G4GeneralParticleSource.hh"
 #include "G4Event.hh"
-#include "G4SystemOfUnits.hh" 
 
 class PrimaryGeneratorAction : public G4VUserPrimaryGeneratorAction {
 private:
@@ -13,6 +13,7 @@ public:
 
 PrimaryGeneratorAction::PrimaryGeneratorAction() {
     fGPS = new G4GeneralParticleSource();
+    G4cout << "✅ PrimaryGeneratorAction: GPS initialized" << G4endl;
 }
 
 void PrimaryGeneratorAction::GeneratePrimaries(G4Event* event) {

@@ -8,21 +8,180 @@ import subprocess
 import json
 import pandas as pd
 import matplotlib.pyplot as plt
-from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg
+import time
+from datetime import datetime  # ← Add this line
+from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QFileDialog, QTextEdit,
     QTabWidget, QFormLayout, QMessageBox, QTableWidget, QTableWidgetItem,
-    QHeaderView
+    QHeaderView, QGroupBox
 )
 from PyQt5.QtCore import Qt
+from PyQt5.QtCore import QThread, pyqtSignal
 
+# === Move simulation logic to a worker thread ===
+class SimulationWorker(QThread):
+        finished = pyqtSignal()
+        error = pyqtSignal(str)
+        log_message = pyqtSignal(str)  # New signal for logging
+        simulation_finished = pyqtSignal(str)  # ✅ New: sends output file path
 
-class MplCanvas(FigureCanvasQTAgg):
-    """Matplotlib canvas embedded in PyQt5"""
-    def __init__(self, parent=None, width=6, height=3, dpi=100):
-        self.fig, self.ax = plt.subplots(figsize=(width, height), dpi=dpi)
-        super().__init__(self.fig)
+        def __init__(self, parent=None):
+            super().__init__(parent)
+            self.main_window = parent
+
+        def run(self):
+            try:
+                out_dir = self.main_window.output_folder.text()
+                os.makedirs(out_dir, exist_ok=True)
+
+                timestamp = datetime.now().strftime("%Y-%m-%d_%H-%M-%S")
+                base_name = self.main_window.sensor_type.currentText().replace(" ", "_")
+                dose_filename = f"dose_{base_name}_{timestamp}.txt"
+                dose_path = os.path.join(out_dir, dose_filename)
+                self.main_window.current_dose_file = dose_path
+
+                # === Generate layers.cfg ===
+                cfg_file = os.path.join(out_dir, "layers.cfg")
+                with open(cfg_file, 'w') as f:
+                    for i in range(self.main_window.layer_table.rowCount()):
+                        w = lambda j: self.main_window.layer_table.cellWidget(i, j)
+                        name = w(0).text().strip()
+                        mat = w(1).currentText().strip()
+                        ir = w(2).text().strip()
+                        orad = w(3).text().strip()
+                        L = w(4).text().strip()
+                        if all([name, mat, ir, orad, L]):
+                            f.write(f"{name} {mat} {ir} {orad} {L}\n")
+                self.log_message.emit("✅ Generated layers.cfg")
+
+                # === Generate input.mac ===
+                src = self.main_window.source_type.currentText()
+                n = int(self.main_window.num_particles.text())
+
+                fiber_length = 5.0
+                radius = 75.0
+                try:
+                    lengths = [float(self.main_window.layer_table.cellWidget(i, 4).text()) 
+                            for i in range(self.main_window.layer_table.rowCount())]
+                    fiber_length = max(lengths) if lengths else 5.0
+                    # calculate radius from outermost layer
+                    last_row = self.layer_table.rowCount() - 1
+                    outer_rad = float(self.layer_table.cellWidget(last_row, 3).text())
+                    radius = max(outer_rad * 1.1, 80)  # 10% larger, or 80 μm
+                except:
+                    pass
+
+                macro_file = os.path.join(out_dir, "input.mac")
+                with open(macro_file, 'w') as f:
+                    f.write("# Radiation Source Configuration\n")
+                    f.write("/run/initialize\n\n")
+                    f.write("/gps/pos/type Plane\n")
+                    f.write("/gps/pos/shape Circle\n")
+                    f.write(f"/gps/pos/centre 0 0 {-fiber_length/2:.3f} mm\n")
+                    f.write(f"/gps/pos/radius {radius} um\n")
+                    f.write("/gps/ang/type iso\n\n")
+
+                    if "Cs-137" in src:
+                        f.write("/gps/particle gamma\n/gps/energy 662 keV\n")
+                        f.write(f"/run/beamOn {n}\n")
+                    elif "Co-60" in src:
+                        n1 = n // 2
+                        n2 = n - n1
+                        f.write("/gps/particle gamma\n")
+                        f.write(f"/gps/energy 1.17 MeV\n/run/beamOn {n1}\n")
+                        f.write(f"/gps/energy 1.33 MeV\n/run/beamOn {n2}\n")
+                    elif "Neutron" in src:
+                        f.write("/gps/particle neutron\n/gps/energy 0.025 eV\n")
+                        f.write("/process/had/Verbosity 0\n")
+                        f.write(f"/run/beamOn {n}\n")
+
+                self.log_message.emit("✅ Generated input.mac")
+
+                # === Build ===
+                self.log_message.emit("🔧 Cleaning and setting up build directory...")
+                build_cmd = [
+                    "docker", "run", "--rm",
+                    "-v", f"{os.getcwd()}:/home/geant4/work",
+                    "my-geant4",
+                    "/bin/bash", "-c",
+                    "rm -rf /home/geant4/work/build && "
+                    "mkdir -p /home/geant4/work/build && "
+                    "cd /home/geant4/work/build && "
+                    "cmake .. && "
+                    "make -j8"
+                ]
+                result = subprocess.run(build_cmd, capture_output=True, text=True)
+                if result.returncode != 0:
+                    self.log_message.emit("❌ Build failed!")
+                    self.log_message.emit(result.stderr[:500])
+                    return
+                else:
+                    self.log_message.emit("✅ Build successful.")
+
+                # === Run ===
+                self.log_message.emit("☢️ Running Geant4 simulation...")
+                run_cmd = [
+                    "docker", "run", "--rm",
+                    "-v", f"{out_dir}:/home/geant4/work",
+                    "-e", "LD_LIBRARY_PATH=/home/geant4/geant4-install/lib",
+                    "my-geant4",
+                    "/home/geant4/work/build/fiber_sim", "input.mac"
+                ]
+                run_result = subprocess.run(run_cmd, capture_output=True, text=True)
+                if run_result.returncode == 0:
+                    old_path = os.path.join(out_dir, "dose_per_step.txt")
+                    time.sleep(1)
+                    if os.path.exists(old_path):
+                        os.rename(old_path, dose_path)
+                        self.log_message.emit(f"📁 Dose data saved as: {dose_filename}")
+                        self.simulation_finished.emit(dose_path)  # ✅ Emit file path
+                    else:
+                        self.log_message.emit("❌ No output file generated!")
+                else:
+                    self.log_message.emit("❌ Simulation failed!")
+                    self.log_message.emit(run_result.stderr)
+
+                self.finished.emit()
+                
+            except Exception as e:
+                self.error.emit(str(e))
+                self.finished.emit()
+
+# Fake G4NistManager for density lookup (if you don't have PyG4Py)
+class G4NistManager:
+    @staticmethod
+    def Instance():
+        return G4NistManager()
+
+    def FindOrBuildMaterial(self, name):
+        # Simulate real NIST/material behavior
+        density_map = {
+            "G4_SILICON_DIOXIDE": 2.20,
+            "G4_AIR": 0.001205,
+            "TiO2": 4.23,
+            "Gd2O3": 7.41,
+            "Al2O3": 3.97,
+            "ZrO2": 5.68,
+            "HfO2": 9.68,
+        }
+        density = density_map.get(name)
+        if density is None:
+            return None
+        # Mock material with GetDensity() in mg/cm³
+        class MockMat:
+            def GetDensity(self):
+                return density * 1000  # mg/cm³
+        return MockMat()
+    
+class MplCanvas(FigureCanvas):
+    def __init__(self, parent=None, width=8, height=6, dpi=100):
+        fig = Figure(figsize=(width, height), dpi=dpi)
+        self.ax = fig.add_subplot(111)
+        super().__init__(fig)
+        self.setParent(parent)
 
 
 class MaterialDB:
@@ -83,6 +242,29 @@ class MaterialDB:
         with open(self.db_file, 'w') as f:
             json.dump(default, f, indent=2)
 
+    def add_material(self, symbol, name, density, formula=None):
+        """
+        Add or update a material in the database
+        Example: add_material("Y2O3", "Yttrium Oxide", 5.01, "Y2O3")
+        """
+        if not formula:
+            formula = symbol  # fallback
+
+        self.materials[symbol] = {
+            "name": name,
+            "density_g_cm3": float(density),
+            "formula": formula
+        }
+
+        # Save immediately
+        try:
+            with open(self.db_file, 'w') as f:
+                json.dump(self.materials, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Failed to save material: {e}")
+            return False
+
     def list_materials(self):
         return sorted(self.materials.keys())
 
@@ -94,7 +276,7 @@ class FiberSimulationUI(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("Dual-Layer Coated Fiber FPI Simulator")
-        self.setGeometry(200, 200, 1100, 1000)
+        self.setGeometry(700, 150, 1000, 1200)
         self.dose_data = None
         self.material_db = MaterialDB()
 
@@ -108,6 +290,11 @@ class FiberSimulationUI(QMainWindow):
 
         self.init_ui()
 
+    def browse_folder(self):
+        """Open a dialog to select output folder"""
+        folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
+        if folder:
+            self.output_folder.setText(folder)
     def init_ui(self):
         container = QWidget()
         layout = QVBoxLayout()
@@ -162,6 +349,15 @@ class FiberSimulationUI(QMainWindow):
         hlay_btns.addWidget(btn_add); hlay_btns.addWidget(btn_dual); hlay_btns.addWidget(btn_clear); hlay_btns.addWidget(btn_reset)
         layout.addLayout(hlay_btns)
 
+         # =======================
+        # 5. Save / Load & Run
+        # =======================
+        hlay_save = QHBoxLayout()
+        btn_save = QPushButton("💾 Save Geometry"); btn_save.clicked.connect(self.save_geometry)
+        btn_load = QPushButton("📁 Load Geometry"); btn_load.clicked.connect(self.load_geometry)
+        hlay_save.addWidget(btn_save); hlay_save.addWidget(btn_load)
+        layout.addLayout(hlay_save)
+
         # =======================
         # 3. Geometry Preview
         # =======================
@@ -194,31 +390,34 @@ class FiberSimulationUI(QMainWindow):
 
         layout.addLayout(form)
 
-        # =======================
-        # 5. Save / Load & Run
-        # =======================
-        hlay_save = QHBoxLayout()
-        btn_save = QPushButton("💾 Save Geometry"); btn_save.clicked.connect(self.save_geometry)
-        btn_load = QPushButton("📁 Load Geometry"); btn_load.clicked.connect(self.load_geometry)
-        hlay_save.addWidget(btn_save); hlay_save.addWidget(btn_load)
-        layout.addLayout(hlay_save)
+        # --- Add Custom Material Section ---
+        mat_group = QGroupBox("Add Custom Material")
+        mat_layout = QFormLayout()
+
+        self.new_mat_symbol = QLineEdit()
+        self.new_mat_symbol.setPlaceholderText("e.g., Y2O3")
+        mat_layout.addRow("Chemical Symbol:", self.new_mat_symbol)
+
+        self.new_mat_name = QLineEdit()
+        self.new_mat_name.setPlaceholderText("e.g., Yttrium Oxide")
+        mat_layout.addRow("Material Name:", self.new_mat_name)
+
+        self.new_mat_density = QLineEdit()
+        self.new_mat_density.setPlaceholderText("Density (g/cm³)")
+        mat_layout.addRow("Density:", self.new_mat_density)
+
+        btn_add_mat = QPushButton("➕ Add Material")
+        btn_add_mat.clicked.connect(self.add_custom_material)
+        mat_layout.addWidget(btn_add_mat)
+
+        mat_group.setLayout(mat_layout)
+        layout.addWidget(mat_group)
+
 
         # 🚀 Run Simulation Button (Big and visible!)
-        btn_run = QPushButton("🚀 RUN SIMULATION")
-        btn_run.setStyleSheet("""
-            QPushButton {
-                background-color: #d32f2f;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 12px;
-                border-radius: 6px;
-            }
-            QPushButton:hover {
-                background-color: #b71c1c;
-            }
-        """)
-        btn_run.clicked.connect(self.run_simulation)
+        btn_run = QPushButton("🚀 Run Simulation")
+        btn_run.setStyleSheet("font-size: 14px; font-weight: bold; padding: 12px; background-color: #4CAF50; color: white; border-radius: 6px;")
+        btn_run.clicked.connect(self.run_simulation)  # ← Connects to your method
         layout.addWidget(btn_run)
 
         # =======================
@@ -236,7 +435,7 @@ class FiberSimulationUI(QMainWindow):
         widget = QWidget()
         layout = QVBoxLayout()
 
-        # Plot canvas
+         # === Matplotlib Canvas ===
         self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
         layout.addWidget(self.canvas)
 
@@ -359,6 +558,47 @@ class FiberSimulationUI(QMainWindow):
         ax.grid(True, alpha=0.3)
         self.preview_canvas.draw()
 
+    def add_custom_material(self):
+        symbol = self.new_mat_symbol.text().strip()
+        name = self.new_mat_name.text().strip()
+        density_str = self.new_mat_density.text().strip()
+
+        if not all([symbol, name, density_str]):
+            QMessageBox.warning(self, "Input Error", "All fields are required.")
+            return
+
+        try:
+            density = float(density_str)
+            if density <= 0:
+                raise ValueError
+        except:
+            QMessageBox.warning(self, "Input Error", "Density must be a positive number.")
+            return
+
+        # Add to DB
+        success = self.material_db.add_material(symbol, name, density)
+        if success:
+            self.log.append(f"✅ Added material: {symbol} ({name}, {density} g/cm³)")
+            # Refresh all combo boxes
+            self.refresh_material_combos()
+            self.new_mat_symbol.clear()
+            self.new_mat_name.clear()
+            self.new_mat_density.clear()
+        else:
+            QMessageBox.critical(self, "Save Failed", "Could not save material to database.")
+
+    def refresh_material_combos(self):
+        """Refresh all material dropdowns in the layer table"""
+        for i in range(self.layer_table.rowCount()):
+            widget = self.layer_table.cellWidget(i, 1)
+            if isinstance(widget, QComboBox):
+                current = widget.currentText()
+                widget.clear()
+                widget.addItems(self.material_db.list_materials())
+                idx = widget.findText(current)
+                if idx >= 0:
+                    widget.setCurrentIndex(idx)
+
     def save_geometry(self):
         filename, _ = QFileDialog.getSaveFileName(self, "Save Geometry", "", "JSON Files (*.json)")
         if not filename: return
@@ -422,116 +662,143 @@ class FiberSimulationUI(QMainWindow):
         layout.addWidget(self.canvas)
         btn_export = QPushButton("💾 Export Results (CSV + Plot)")
         btn_export.clicked.connect(self.export_results)
+        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
         layout.addWidget(btn_export)
+        layout.addWidget(self.canvas)
         widget.setLayout(layout)
         return widget
-
+    
     def run_simulation(self):
-        try:
-            out_dir = self.output_folder.text()
-            os.makedirs(out_dir, exist_ok=True)
+        # Prevent multiple runs
+        if hasattr(self, 'worker') and self.worker.isRunning():
+            self.log.append("⚠️ Simulation already running!")
+            return
 
-             # Generate geometry.mac
-            geo_file = os.path.join(out_dir, "geometry.mac")
-            with open(geo_file, 'w') as f:
-                for i in range(self.layer_table.rowCount()):
-                    w = lambda j: self.layer_table.cellWidget(i, j)
-                    name = w(0).text()
-                    mat = w(1).currentText()  # 🔧 QComboBox → currentText()
-                    ir = w(2).text()
-                    orad = w(3).text()
-                    L = w(4).text()
-                    f.write(f"/detector/config/addLayer {name} {mat} {ir} {orad} {L}\n")
-            self.log.append("✅ Generated geometry.mac")
+        # Create worker thread
+        self.worker = SimulationWorker(self)
 
+        # Connect signals
+        # ✅ Connect log signal
+        self.worker.log_message.connect(self.log.append)
+        self.worker.finished.connect(self.on_simulation_finished)
+        self.worker.error.connect(lambda msg: self.log.append(f"💥 Error: {msg}"))
+        self.worker.simulation_finished.connect(self.load_results)  # ✅ Load results when done
+        # Start the thread
+        self.worker.start()
+        self.log.append("🔧 Started simulation in background...")
 
-            # Generate radiation macro
-            src = self.source_type.currentText()
-            n = int(self.num_particles.text())
-            macro_file = os.path.join(out_dir, "input.mac")
-            with open(macro_file, 'w') as f:
-                f.write("/run/initialize\ncuts/setLowEdge 10 eV\n")
-                f.write("/gps/type Plane\n/gps/shape Circle\n/gps/radius 1 mm\n")
-                f.write("/gps/ang/type iso\n/gps/position 0 0 -5 mm\n")
-                if "Cs-137" in src:
-                    f.write("/gps/particle gamma\n/gps/energy 662 keV\n/run/beamOn " + str(n) + "\n")
-                elif "Co-60" in src:
-                    f.write("/gps/particle gamma\n")
-                    f.write(f"/gps/energy 1.17 MeV\n/run/beamOn {n//2}\n")
-                    f.write(f"/gps/energy 1.33 MeV\n/run/beamOn {n//2}\n")
-                elif "Neutron" in src:
-                    f.write("/gps/particle neutron\n/gps/energy 0.025 eV\n")
-                    f.write("/process/had/Verbosity 0\n/run/beamOn " + str(n) + "\n")
-            self.log.append("✅ Generated input.mac")
-
-            # Build simulation binary
-            self.log.append("🔧 Building simulation...")
-            build_cmd = [
-                "docker", "run", "--rm",
-                "-v", f"{os.getcwd()}:/home/geant4/work",
-                "my-geant4",
-                "/bin/bash", "-c",
-                "cd /home/geant4/work && mkdir -p build && "
-                "cd build && "
-                "if [ ! -f CMakeCache.txt ]; then cmake ..; fi && "
-                "make -j8"
-            ]
-            result = subprocess.run(build_cmd, capture_output=True, text=True)
-            if result.returncode != 0:
-                self.log.append("❌ Build failed!")
-                self.log.append(result.stderr)
-                QMessageBox.critical(self, "Build Failed", "Check logs.")
-                return
-            else:
-                self.log.append("✅ Build successful.")
-
-            # Run simulation
-            self.log.append("☢️ Running Geant4 simulation...")
-            run_cmd = [
-                "docker", "run", "--rm",
-                "-v", f"{out_dir}:/home/geant4/work",
-                "-e", "LD_LIBRARY_PATH=/home/geant4/geant4-install/lib",
-                "my-geant4",
-                "/home/geant4/work/build/fiber_sim"
-            ]
-            run_result = subprocess.run(run_cmd, capture_output=True, text=True)
-            if run_result.returncode == 0:
-                self.log.append("✅ Simulation completed!")
-                self.load_results(os.path.join(out_dir, "dose_per_step.txt"))
-            else:
-                self.log.append(f"❌ Simulation failed: {run_result.stderr}")
-                QMessageBox.critical(self, "Simulation Failed", "See log for details.")
-
-        except Exception as e:
-            self.log.append(f"💥 Error: {str(e)}")
-            QMessageBox.critical(self, "Error", str(e))
-
-    def browse_folder(self):
-        folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
-        if folder:
-            self.output_folder.setText(folder)
+    def on_simulation_finished(self):
+        self.log.append("🏁 Simulation finished.")
+        # Optional: Enable buttons again
+        # self.btn_run.setEnabled(True)
 
     def load_results(self, filename):
         if not os.path.exists(filename):
-            self.log.append("❌ No output file found!")
+            self.log.append("❌ File not found!")
             return
-        df = pd.read_csv(filename, sep='\t', comment='#', header=None)
-        df.columns = ['Volume', 'X', 'Y', 'Z', 'Edep_keV', 'StepLength_nm']
-        df['Edep_J'] = df['Edep_keV'] * 1.602e-16
-        self.dose_data = df
-        self.log.append(f"📊 Loaded {len(df)} steps.")
-        self.plot_dose()
+
+        try:
+            df = pd.read_csv(filename, sep='\t', comment='#', header=None)
+            if len(df) == 0:
+                self.log.append("⚠️ Output file is empty.")
+                return
+
+            df.columns = ['Volume', 'X', 'Y', 'Z', 'Edep_keV', 'StepLength_nm']
+            df['Edep_J'] = df['Edep_keV'] * 1.602e-16
+            self.dose_data = df
+            self.log.append(f"📊 Loaded {len(df)} energy deposits.")
+
+            # === Step 1: Extract layer geometry from UI ===
+            volumes_to_mass = {}
+
+            for i in range(self.layer_table.rowCount()):
+                w = lambda j: self.layer_table.cellWidget(i, j)
+                name = w(0).text().strip()
+                mat_name = w(1).currentText().strip()
+                ir = float(w(2).text()) * 1e-6  # μm → m
+                orad = float(w(3).text()) * 1e-6  # μm → m
+                length = float(w(4).text()) * 1e-3  # mm → m
+
+                vol_name_pv = name + "_PV"
+
+                # Get material from NIST or custom DB
+                nist = G4NistManager.Instance() if hasattr(G4NistManager, 'Instance') else None
+                mat = None
+                if nist:
+                    mat = nist.FindOrBuildMaterial(mat_name)
+                if not mat:
+                    # Fallback densities (g/cm³ → kg/m³)
+                    density_map = {
+                        "TiO2": 4.23,
+                        "Gd2O3": 7.41,
+                        "Al2O3": 3.97,
+                        "ZrO2": 5.68,
+                        "HfO2": 9.68,
+                        "SiO2": 2.20,
+                    }
+                    density_gcm3 = density_map.get(mat_name, 2.20)  # default SiO2
+                    density_kgm3 = density_gcm3 * 1000  # g/cm³ → kg/m³
+                else:
+                    density_kgm3 = mat.GetDensity() / 1000.0  # Geant4 stores in mg/cm³ → kg/m³
+
+                # Volume = π(R² - r²) × L
+                volume_m3 = 3.14159 * ((orad**2) - (ir**2)) * length
+                mass_kg = volume_m3 * density_kgm3
+
+                volumes_to_mass[vol_name_pv] = max(mass_kg, 1e-20)  # avoid zero
+
+            # === Step 2: Group and compute dose ===
+            self.log.append("🔍 Dose by volume:")
+            grouped = df.groupby('Volume')['Edep_J'].sum()
+
+            for vol, total_energy in grouped.items():
+                if vol in volumes_to_mass:
+                    mass = volumes_to_mass[vol]
+                    dose_gy = total_energy / mass
+                    self.log.append(f"  {vol}: {dose_gy:.6f} Gy")
+                else:
+                    self.log.append(f"  {vol}: ❓ Unknown volume (no geometry info)")
+
+            self.plot_dose()
+
+        except Exception as e:
+            self.log.append(f"💥 Failed to load: {str(e)}")
+            import traceback
+            self.log.append(traceback.format_exc())
 
     def plot_dose(self):
-        if self.dose_data is None: return
+        if self.dose_data is None:
+            self.log.append("No dose data to plot.")
+            return
+        if self.canvas is None:
+            self.log.append("Canvas not initialized.")
+            return
+
         ax = self.canvas.ax
         ax.clear()
-        r = (self.dose_data['X']**2 + self.dose_data['Y']**2)**0.5
-        sc = ax.scatter(r, self.dose_data['Z'], c=self.dose_data['Edep_keV'], cmap='hot_r', s=3, alpha=0.8)
-        ax.set_xlabel("Radial Position (μm)")
-        ax.set_ylabel("Axial Position (μm)")
-        ax.set_title("Energy Deposit Distribution")
-        self.canvas.fig.colorbar(sc, ax=ax, label="Energy (keV)")
+
+        df = self.dose_data.copy()
+
+        # Compute radial position
+        r = np.sqrt(df['X']**2 + df['Y']**2)
+
+        # Filter out World hits for clarity (optional)
+        mask = df['Volume'] != 'World'
+        r = r[mask]
+        z = df['Z'][mask]
+        E = df['Edep_keV'][mask]
+
+        if len(r) == 0:
+            ax.text(0.5, 0.5, 'No valid data to plot', transform=ax.transAxes, ha='center')
+        else:
+            sc = ax.scatter(r, z, c=E, cmap='hot_r', s=5, alpha=0.9)
+            ax.set_xlabel("Radial Position (μm)")
+            ax.set_ylabel("Axial Position (μm)")
+            ax.set_title("Energy Deposits in Fiber Sensor")
+            ax.set_xlim(0, 80)
+            ax.set_ylim(-2600, 2600)
+            self.canvas.fig.colorbar(sc, ax=ax, label="Energy (keV)")
+
         self.canvas.draw()
 
     def export_results(self):

@@ -1,0 +1,30 @@
+[
+  {
+    "name": "Core",
+    "material": "G4_SILICON_DIOXIDE",
+    "inner_rad_um": 0.0,
+    "outer_rad_um": 4.1,
+    "length_mm": 5.0
+  },
+  {
+    "name": "Cladding",
+    "material": "G4_SILICON_DIOXIDE",
+    "inner_rad_um": 4.1,
+    "outer_rad_um": 75.0,
+    "length_mm": 5.0
+  },
+  {
+    "name": "TiO2_Coating",
+    "material": "TiO2",
+    "inner_rad_um": 75.0,
+    "outer_rad_um": 75.3,
+    "length_mm": 5.0
+  },
+  {
+    "name": "Gd2O3_Coating",
+    "material": "Gd2O3",
+    "inner_rad_um": 75.3,
+    "outer_rad_um": 75.5,
+    "length_mm": 5.0
+  }
+]
