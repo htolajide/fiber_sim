@@ -7,6 +7,7 @@ import os
 import subprocess
 import json
 import pandas as pd
+import numpy as np
 import matplotlib.pyplot as plt
 import time
 from datetime import datetime  # ← Add this line
@@ -178,9 +179,9 @@ class G4NistManager:
     
 class MplCanvas(FigureCanvas):
     def __init__(self, parent=None, width=8, height=6, dpi=100):
-        fig = Figure(figsize=(width, height), dpi=dpi)
-        self.ax = fig.add_subplot(111)
-        super().__init__(fig)
+        self.figure = Figure(figsize=(width, height), dpi=dpi)
+        self.ax = self.figure.add_subplot(111)
+        super().__init__(self.figure)
         self.setParent(parent)
 
 
@@ -797,7 +798,7 @@ class FiberSimulationUI(QMainWindow):
             ax.set_title("Energy Deposits in Fiber Sensor")
             ax.set_xlim(0, 80)
             ax.set_ylim(-2600, 2600)
-            self.canvas.fig.colorbar(sc, ax=ax, label="Energy (keV)")
+            self.canvas.figure.colorbar(sc, ax=ax, label="Energy (keV)")
 
         self.canvas.draw()
 
@@ -811,7 +812,7 @@ class FiberSimulationUI(QMainWindow):
             self.log.append(f"💾 Saved dose data to {csv_file}")
         png_file, _ = QFileDialog.getSaveFileName(self, "Save Plot", "", "PNG Files (*.png)")
         if png_file:
-            self.canvas.fig.savefig(png_file, dpi=300, bbox_inches='tight')
+            self.canvas.figure.savefig(png_file, dpi=300, bbox_inches='tight')
             self.log.append(f"📊 Saved plot to {png_file}")
 
 
