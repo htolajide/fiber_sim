@@ -12,6 +12,7 @@
 #include "DetectorConstruction.hh"
 #include "PrimaryGeneratorAction.hh"
 #include "SteppingAction.hh"
+#include "G4EmParameters.hh"
 
 int main(int argc, char** argv) {
     G4RunManager* runManager = new G4RunManager;
@@ -23,6 +24,8 @@ int main(int argc, char** argv) {
     physics->RegisterPhysics(new G4DecayPhysics());
     physics->RegisterPhysics(new G4RadioactiveDecayPhysics());
     runManager->SetUserInitialization(physics);
+    G4EmParameters::Instance()->SetAugerCascade(true);
+    G4EmParameters::Instance()->SetDeexcitationIgnoreCut(true);
 
     runManager->SetUserAction(new PrimaryGeneratorAction);
     runManager->SetUserAction(new SteppingAction);

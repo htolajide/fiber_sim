@@ -96,7 +96,6 @@ class SimulationWorker(QThread):
                         f.write(f"/gps/energy 1.33 MeV\n/run/beamOn {n2}\n")
                     elif "Neutron" in src:
                         f.write("/gps/particle neutron\n/gps/energy 0.025 eV\n")
-                        f.write("/process/had/Verbosity 0\n")
                         f.write(f"/run/beamOn {n}\n")
 
                 self.log_message.emit("✅ Generated input.mac")

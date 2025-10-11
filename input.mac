@@ -7,6 +7,6 @@
 /gps/pos/radius 75.0 um
 /gps/ang/type iso
 
-/gps/particle gamma
-/gps/energy 662 keV
+/gps/particle neutron
+/gps/energy 0.025 eV
 /run/beamOn 50000
