@@ -1,12 +1,12 @@
-# Radiation Source Configuration
-/run/initialize
+# Geant4 Macro File - Auto-generated
 
-/gps/pos/type Plane
-/gps/pos/shape Circle
-/gps/pos/centre 0 0 -2.500 mm
-/gps/pos/radius 75.0 um
+# Source Setup (General Particle Source) GPS
+/gps/pos/type Point
+/gps/pos/centre 0 0 -30 mm
+/gps/direction 0 0 1
 /gps/ang/type iso
+/gps/ene/type Mono
+/gps/particle gamma
+/gps/energy 0.662000 MeV
 
-/gps/particle neutron
-/gps/energy 0.025 eV
 /run/beamOn 50000

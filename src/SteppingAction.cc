@@ -4,19 +4,27 @@
 #include "G4RunManager.hh"
 #include "G4SystemOfUnits.hh"
 #include "G4UnitsTable.hh"
+#include "G4ios.hh"
 
 // Define static member
 bool SteppingAction::headerWritten = false;
 
 SteppingAction::SteppingAction()
 {
-    // Open file in append mode
-    doseFile.open("/home/geant4/work/dose_per_step.txt", std::ios::app);
+    // --- Write to current directory ---
+    std::ofstream clearFile("dose_per_step.txt", std::ios::out | std::ios::trunc);
+    clearFile.close();
 
-    // Write header only once
+    doseFile.open("dose_per_step.txt", std::ios::app);
+
     if (!headerWritten) {
-        doseFile << "# Volume\tX[um]\tY[um]\tZ[um]\tEdep[keV]\tLength[nm]\n";
+        doseFile << "# Volume\tX[um]\tY[um]\tZ[um]\tEdep[keV]\tLength[nm]" << G4endl;
         headerWritten = true;
+    }
+
+    if (!doseFile.is_open()) {
+        G4Exception("SteppingAction::SteppingAction", "FileOpenError", FatalException,
+                    "Could not open dose_per_step.txt");
     }
 }
 
@@ -33,17 +41,20 @@ void SteppingAction::UserSteppingAction(const G4Step* step) {
     G4String volName = step->GetPreStepPoint()->GetPhysicalVolume()->GetName();
     G4ThreeVector pos = step->GetPreStepPoint()->GetPosition();
 
+    // Write with tab separation
     doseFile
         << volName << "\t"
-        << pos.x()/um << "\t" << pos.y()/um << "\t" << pos.z()/um << "\t"
+        << pos.x()/um << "\t" 
+        << pos.y()/um << "\t" 
+        << pos.z()/um << "\t"
         << edep/keV << "\t"
         << step->GetStepLength()/nm
-        << "\n";
+        << G4endl;  // Flushes buffer — important!
 
     // Debug: log first hit
     static int count = 0;
     if (++count == 1) {
-        G4cout << "🎯 First energy deposit: " << edep/keV 
-               << " keV in " << volName << G4endl;
+        G4cout << "🎯 First energy deposit: " << G4BestUnit(edep, "Energy") 
+               << " in " << volName << G4endl;
     }
 }
