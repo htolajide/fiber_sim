@@ -40,7 +40,13 @@ void SteppingAction::UserSteppingAction(const G4Step* step) {
 
     G4String volName = step->GetPreStepPoint()->GetPhysicalVolume()->GetName();
     G4ThreeVector pos = step->GetPreStepPoint()->GetPosition();
-
+    // Debug first few hits
+    static int count = 0;
+    if (++count <= 5) {
+        G4cout << "🎯 Hit in " << volName 
+               << " at Z=" << pos.z()/mm << " mm"
+               << " | Edep=" << edep/keV << " keV" << G4endl;
+    }
     // Write with tab separation
     doseFile
         << volName << "\t"
@@ -52,8 +58,8 @@ void SteppingAction::UserSteppingAction(const G4Step* step) {
         << G4endl;  // Flushes buffer — important!
 
     // Debug: log first hit
-    static int count = 0;
-    if (++count == 1) {
+    static int count2 = 0;
+    if (++count2 == 1) {
         G4cout << "🎯 First energy deposit: " << G4BestUnit(edep, "Energy") 
                << " in " << volName << G4endl;
     }

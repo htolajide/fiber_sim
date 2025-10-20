@@ -40,28 +40,36 @@ G4Material* CreateCustomMaterial(const G4String& name) {
 DetectorConstruction::~DetectorConstruction() = default;
 
 DetectorConstruction::DetectorConstruction() {
-    // In DetectorConstruction constructor
-    std::ifstream f("../layers.cfg");
+    std::ifstream f("layers.cfg");
     if (!f) {
-        G4cout << "❌ FAILED TO OPEN: ../layers.cfg" << G4endl;
-        
-        // Debug: List files in parent directory
-        system("ls -la ..");
-    } else {
-        G4cout << "✅ Successfully opened ../layers.cfg" << G4endl;
+        G4cout << "❌ FAILED TO OPEN layers.cfg" << G4endl;
+        return;
     }
 
-    G4String name, matName, typeStr;
-    G4double ir, orad, len;
+    G4cout << "✅ Successfully opened layers.cfg" << G4endl;
 
-    G4cout << "🔍 Attempting to read ../layers.cfg..." << G4endl;
-    while (f >> name >> matName >> ir >> orad >> len >> typeStr) {
-        G4cout << "📄 Read layer: " << name << " | Mat=" << matName 
-            << " | R=" << ir << "-" << orad << " μm"
-            << " | L=" << len << " mm"
-            << " | Type=" << typeStr << G4endl;
+    std::string line;
+    while (std::getline(f, line)) {
+        // Skip empty lines and comments
+        if (line.empty() || line[0] == '#' || line.find_first_not_of(" \t") == std::string::npos) {
+            continue;
+        }
 
-        AddLayer(name, matName, ir*um, orad*um, len*mm, typeStr);
+        std::istringstream iss(line);
+        G4String name, matName, typeStr;
+        G4double ir, orad, len;
+
+        if (iss >> name >> matName >> ir >> orad >> len >> typeStr) {
+            G4cout << "📄 Read: " << name 
+                   << " | Mat=" << matName 
+                   << " | R=" << ir << "-" << orad << " μm"
+                   << " | L=" << len << " mm"
+                   << " | Type=" << typeStr << G4endl;
+
+            AddLayer(name, matName, ir*um, orad*um, len*mm, typeStr);
+        } else {
+            G4cout << "❌ Failed to parse line: " << line << G4endl;
+        }
     }
 }
 

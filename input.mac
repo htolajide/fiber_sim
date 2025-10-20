@@ -1,12 +1,6 @@
 # Geant4 Macro File - Auto-generated
+# End-Face Fiber Illumination Setup
 
-# Source Setup (General Particle Source) GPS
-/gps/pos/type Point
-/gps/pos/centre 0 0 -30 mm
-/gps/direction 0 0 1
-/gps/ang/type iso
-/gps/ene/type Mono
-/gps/particle gamma
-/gps/energy 0.662000 MeV
-
-/run/beamOn 50000
+# Source Setup: End-Face Illumination
+/gps/pos/type Plane
+/gps/pos/shape Circle
