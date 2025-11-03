@@ -69,8 +69,9 @@ class SimulationWorker(QThread):
 
                 # === Build Geant4 Application (via Docker) ===
                 self.log_message.emit("🔧 Cleaning and setting up build directory...")
-                work_dir = os.getcwd()
-
+                # Use absolute path to project root (where CMakeLists.txt lives)
+                work_dir = os.getcwd()  # Project root containing CMakeLists.txt, src/, build/
+                
                 build_cmd = [
                     "docker", "run", "--rm",
                     "-v", f"{work_dir}:/home/geant4/work",
@@ -89,32 +90,36 @@ class SimulationWorker(QThread):
                     return
                 else:
                     self.log_message.emit("✅ Build successful.")
-
                 # === Run Simulation ===
                 self.log_message.emit("☢️ Running Geant4 simulation...")
-
-                # Ensure output directory exists inside container
-                prep_cmd = [
-                    "docker", "run", "--rm",
-                    "-v", f"{out_dir}:/home/geant4/work/output",
-                    "my-geant4",
-                    "mkdir", "-p", "/home/geant4/work/output"
-                ]
-                subprocess.run(prep_cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-                # === Run Simulation ===
-                # Remove prep_cmd — no longer needed
-                # Instead, ensure full project is mounted so fiber_sim can access layers.cfg and input.mac
-
                 run_cmd = [
                     "docker", "run", "--rm",
-                    "-v", f"{work_dir}:/home/geant4/work",           # ✅ Mount full project (again)
+                    "-v", f"{work_dir}:/home/geant4/work",           # ✅ Mount full project
                     "-e", "LD_LIBRARY_PATH=/home/geant4/geant4-install/lib",
                     "my-geant4",
                     "/home/geant4/work/build/fiber_sim",             # Executable
                     "/home/geant4/work/input.mac"                    # Macro file
                 ]
 
-                run_result = subprocess.run(run_cmd, capture_output=True, text=True)
+                run_result = subprocess.run(
+                    run_cmd,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    timeout=300,  # 5-minute timeout
+                    check=False
+                )
+
+                # Decode with error tolerance
+                try:
+                    stdout_text = run_result.stdout.decode('utf-8', errors='replace')
+                except Exception:
+                    stdout_text = run_result.stdout.decode('cp1252', errors='replace')
+
+                try:
+                    stderr_text = run_result.stderr.decode('utf-8', errors='replace')
+                except Exception:
+                    stderr_text = run_result.stderr.decode('cp1252', errors='replace')
+
 
                 if run_result.returncode == 0:
                     time.sleep(0.5)
@@ -130,6 +135,12 @@ class SimulationWorker(QThread):
                     self.error.emit("Simulation runtime error")
                     self.log_message.emit(run_result.stderr[:2000])
 
+            except subprocess.TimeoutExpired:
+                self.error.emit("❌ Simulation timed out after 5 minutes.")
+                return
+            except Exception as e:
+                self.error.emit(f"❌ Failed to run simulation: {str(e)}")
+                return
             except Exception as e:
                 if not getattr(self, 'is_stopped', False):
                     self.error.emit(str(e))
@@ -262,7 +273,6 @@ class MaterialDB:
 class FiberSimulationUI(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Optical Fiber Interfermeter Radiation Dose Simulator")
         self.setGeometry(700, 150, 1000, 1200)
         self.dose_data = None
         self.material_db = MaterialDB()
@@ -272,21 +282,29 @@ class FiberSimulationUI(QMainWindow):
         self.cav_group = None
 
         # ✅ Initialize log early
-        self.output_folder = None  # will be set in create_source_tab
+        self.output_folder = None # Set default path will be set in create_source_tab
         self.source_type = None
         self.num_particles = None
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.append("✅ Ready to simulate! Configure geometry and source.")
-
         self.init_ui()
+        
 
     def browse_folder(self):
         """Open a dialog to select output folder"""
         folder = QFileDialog.getExistingDirectory(self, "Select Output Folder")
         if folder:
             self.output_folder.setText(folder)
-            
+
+    def get_output_dir(self):
+        """Safely get output directory"""
+        if hasattr(self, 'output_folder') and self.output_folder is not None:
+            path = self.output_folder.text().strip()
+            if path and os.path.exists(path):
+                return path
+        return os.getcwd()  # fallback     
+    
     def init_ui(self):
         self.setWindowTitle("Fiber FPI Radiation Simulation")
         self.setGeometry(300, 100, 1800, 1150)
@@ -316,6 +334,7 @@ class FiberSimulationUI(QMainWindow):
         output_layout = QVBoxLayout()
         output_layout.addWidget(self.create_output_tab())  # Add output tab
         output_group.setLayout(output_layout)
+        self.default_layers()  # Now safe to call
 
         # === Splitter (Optional: for resizable panels) ===
         splitter = QSplitter(Qt.Horizontal)
@@ -327,6 +346,7 @@ class FiberSimulationUI(QMainWindow):
         main_layout.addWidget(splitter)
 
         return main_layout
+    
     def setup_analysis(self):
         """Call this after UI is fully initialized"""
         self.material_props = self.load_material_density()
@@ -396,20 +416,6 @@ class FiberSimulationUI(QMainWindow):
         btn_load = QPushButton("📁 Load Geometry"); btn_load.clicked.connect(self.load_geometry)
         hlay_save.addWidget(btn_save); hlay_save.addWidget(btn_load)
         layout.addLayout(hlay_save)
-
-         # === Move preview canvas BELOW table ===
-        # ✅ Ensure preview_layout is only added ONCE
-        if not hasattr(self, 'preview_layout'):
-            self.preview_layout = QVBoxLayout()
-            self.preview_layout.addWidget(QLabel("<b>Sensor Structure Preview:</b>"))
-            
-            # ✅ Increased height to 3.5 for better label visibility
-            self.preview_canvas = MplCanvas(self, width=6, height=3.5, dpi=100)  # ← Was height=2
-            self.preview_layout.addWidget(self.preview_canvas)
-            layout.addLayout(self.preview_layout)
-        else:
-            # If already exists, don't re-add
-            pass
 
         # =======================
         # 5. Radiation Source Settings
@@ -539,29 +545,80 @@ class FiberSimulationUI(QMainWindow):
         layout.addWidget(self.log)
         self.default_layers()
         widget.setLayout(layout)
-
-        self.default_layers()
         return widget
     
+    ################ Output Tab Creation ################
+    def create_output_tab(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        # === Top Section: Preview and Chart (Split 1:3) ===
+        splitter = QSplitter(Qt.Vertical)
+
+        # --- Structure Preview (Top 1/4) ---
+        preview_group = QGroupBox("Sensor Structure Preview")
+        if not hasattr(self, 'preview_layout'):
+            preview_layout = QVBoxLayout()
+            self.preview_canvas = MplCanvas(self, width=8, height=1.5, dpi=100)  # Smaller height
+            preview_layout.addWidget(self.preview_canvas)
+            preview_group.setLayout(preview_layout)
+
+            # Wrap in widget for splitter
+            preview_widget = QWidget()
+            preview_widget.setLayout(QVBoxLayout())
+            preview_widget.layout().addWidget(preview_group)
+        else:
+            # If already exists, don't re-add
+            pass
+        # --- Results Chart (Bottom 3/4) ---
+        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+        chart_group = QGroupBox("Dose Distribution")
+        chart_layout = QVBoxLayout()
+        chart_layout.addWidget(self.canvas)
+        chart_group.setLayout(chart_layout)
+
+        chart_widget = QWidget()
+        chart_widget.setLayout(QVBoxLayout())
+        chart_widget.layout().addWidget(chart_group)
+
+        # Add to splitter
+        splitter.addWidget(preview_widget)
+        splitter.addWidget(chart_widget)
+        splitter.setSizes([int(self.height() * 0.25), int(self.height() * 0.75)])  # 1:3 ratio
+
+        layout.addWidget(splitter)
+
+        # === Button Row (Single Line) ===
+        btn_layout = QHBoxLayout()
+        
+        btn_export = QPushButton("💾 Export Results")
+        btn_export.clicked.connect(self.export_results)
+
+        btn_analyze = QPushButton("🔬 Analyze Dose")
+        btn_analyze.clicked.connect(self.analyze_dose)
+
+        btn_export_summary = QPushButton("📄 Export Dose Summary")
+        btn_export_summary.clicked.connect(self.export_dose_summary)
+
+        btn_layout.addStretch()
+        btn_layout.addWidget(btn_export)
+        btn_layout.addWidget(btn_analyze)
+        btn_layout.addWidget(btn_export_summary)
+        btn_layout.addStretch()
+
+        layout.addLayout(btn_layout)
+        widget.setLayout(layout)
+        return widget
+
     ############### Layer Table Management ################
     def on_sensor_type_changed(self):
-        """React when user changes sensor structure"""
-        structure = self.sensor_type.currentText()
-        self.log.append(f"🔧 Switched to: {structure}")
-        
-        # Clear current table
-        self.layer_table.setRowCount(0)
-        
-        # Remove cavity group if exists
-        if self.cav_group is not None:
-            self.cav_group.setParent(None)
-            self.cav_group = None
-
-        # Load appropriate layers
-        if structure == "End-Face Coated FPI":
-            self.load_end_face_layers()
-        elif structure == "In-Fiber Microcavity":
+        self.clear_layers()
+        sensor = self.sensor_type.currentText()
+        if sensor == "In-Fiber Microcavity":
             self.load_microcavity_layers()
+        else:
+            self.load_end_face_layers()
+        self.update_preview()
 
     def add_layer_row(self, name="", mat="", layer_type="Cylindrical", ir="", orad="", length="5.0"):
         try:
@@ -606,10 +663,7 @@ class FiberSimulationUI(QMainWindow):
             # Length
             len_widget = QLineEdit(str(length))
             self.layer_table.setCellWidget(row, 5, len_widget)
-
             self.update_preview()
-            
-
         except Exception as e:
             import traceback
             print("❌ CRASH in add_layer_row():", str(e))
@@ -669,58 +723,29 @@ class FiberSimulationUI(QMainWindow):
 
     def load_end_face_layers(self):
         """Load standard end-face coated FPI stack"""
-        layers = [
-            ("Core", "G4_SILICON_DIOXIDE", 0.0, 4.1),
-            ("Cladding", "G4_SILICON_DIOXIDE", 4.1, 75.0),
-            ("TiO2_Coating", "TiO2", 75.0, 75.3),
-            ("Gd2O3_Coating", "Gd2O3", 75.3, 75.5)
-        ]
-        for name, mat, ir, orad in layers:
-            row = self.layer_table.rowCount()
-            self.layer_table.insertRow(row)
-
-            self.layer_table.setItem(row, 0, QTableWidgetItem(name))
-
-            mat_combo = QComboBox()
-            mat_combo.addItems(["G4_SILICON_DIOXIDE", "TiO2", "Gd2O3"])
-            mat_combo.setCurrentText(mat)
-            self.layer_table.setCellWidget(row, 1, mat_combo)
-
-            self.layer_table.setItem(row, 2, QTableWidgetItem(f"{ir:.1f}"))
-            self.layer_table.setItem(row, 3, QTableWidgetItem(f"{orad:.1f}"))
-
-            length = "5.0" if "Coating" not in name else "0.005"  # mm
-            len_input = QLineEdit(length)
-            self.layer_table.setCellWidget(row, 4, len_input)
-            # Refresh preview
-            self.update_preview()
+        self.default_layers()
+           
+        # Refresh preview
+        self.update_preview()
 
     def load_microcavity_layers(self):
         """Load base layers for in-fiber microcavity"""
-        layers = [
-            ("Core", "G4_SILICON_DIOXIDE", 0.0, 4.1),
-            ("Cladding", "G4_SILICON_DIOXIDE", 4.1, 75.0)
-        ]
-        for name, mat, ir, orad in layers:
-            row = self.layer_table.rowCount()
-            self.layer_table.insertRow(row)
+        self.clear_layers()
 
-            self.layer_table.setItem(row, 0, QTableWidgetItem(name))
+        # Base fiber — full length (5 mm)
+        self.add_layer_row("Core", "G4_SILICON_DIOXIDE", "Solid Cylinder", "0.0", "4.1", "5.0")
+        self.add_layer_row("Cladding", "G4_SILICON_DIOXIDE", "Hollow Cylinder", "4.1", "75.0", "5.0")
 
-            mat_combo = QComboBox()
-            mat_combo.addItems(["G4_SILICON_DIOXIDE", "TiO2", "Gd2O3"])
-            mat_combo.setCurrentText(mat)
-            self.layer_table.setCellWidget(row, 1, mat_combo)
+        # Spacer layer (optional, can be used to separate cladding from cavity region)
+        self.add_layer_row("Spacer", "G4_SILICON_DIOXIDE", "Hollow Cylinder", "75.0", "80.0", "5.0")  # Full length
 
-            self.layer_table.setItem(row, 2, QTableWidgetItem(f"{ir:.1f}"))
-            self.layer_table.setItem(row, 3, QTableWidgetItem(f"{orad:.1f}"))
+        # Cavity: air-filled hollow cylinder placed at mid-length
+        # This represents the void created by micromachining
+        self.add_layer_row("Cavity", "G4_AIR", "HOLLOW_CYLINDER", "75.0", "85.0", "0.150")  # 150 μm long
 
-            len_input = QLineEdit("5.0")
-            self.layer_table.setCellWidget(row, 4, len_input)
-
-        # Add microcavity-specific inputs
+        # Add user controls for cavity position/orientation
         self.add_microcavity_parameters()
-        # Refresh preview
+
         self.update_preview()
 
     def add_microcavity_parameters(self):
@@ -784,7 +809,7 @@ class FiberSimulationUI(QMainWindow):
             self.add_layer_row("Gd2O3_Coating", "Gd2O3", "End-Face Disk", "75.3", "75.5", "0.0002")
 
         self.update_preview()
-
+    
     def update_preview(self):
         if not hasattr(self, 'preview_canvas') or self.preview_canvas is None:
             return
@@ -795,94 +820,131 @@ class FiberSimulationUI(QMainWindow):
         layers = []
         for i in range(self.layer_table.rowCount()):
             try:
-                name_widget = self.layer_table.cellWidget(i, 0)
-                mat_widget = self.layer_table.cellWidget(i, 1)
-                type_widget = self.layer_table.cellWidget(i, 2)
-                ir_widget = self.layer_table.cellWidget(i, 3)
-                orad_widget = self.layer_table.cellWidget(i, 4)
-                len_widget = self.layer_table.cellWidget(i, 5)
+                w = lambda j: self.layer_table.cellWidget(i, j)
+                name = str(w(0).text()).strip()
+                mat_name = str(w(1).currentText()).strip()
+                layer_type = str(w(2).currentText()).strip() if w(2) else "Hollow Cylinder"
+                ir = float(w(3).text())
+                orad = float(w(4).text())
+                L = float(w(5).text())
 
-                if not all([name_widget, type_widget, ir_widget, orad_widget, len_widget]):
-                    continue
-
-                name = str(name_widget.text()).strip()
-                layer_type = str(type_widget.currentText()).strip()
-                ir = float(ir_widget.text())
-                orad = float(orad_widget.text())
-                L = float(len_widget.text())
-
-                layers.append((name, layer_type, ir, orad, L))
+                layers.append((name, mat_name, layer_type, ir, orad, L))
             except Exception as e:
                 continue
 
         if not layers:
-            ax.set_xlim(-0.5, 0.5)
-            ax.set_ylim(0, 80)
-            ax.text(0, 40, "No layers defined", ha='center', va='center', fontsize=10, color='gray')
+            ax.text(0.5, 0.5, "No layers defined", ha='center', va='center', transform=ax.transAxes, fontsize=10, color='gray')
+            ax.axis('off')
         else:
-            # Color mapping
-            colors = {
-                'Core': 'blue',
-                'Cladding': 'lightblue',
-                'TiO2': 'red',
-                'Gd2O3': 'darkred',
-                'Spacer': 'orange',
-                'Cavity': 'white',
-                'Taper': 'purple'
+            # Color mapping by material
+            color_map = {
+                'TiO2': '#e63946',
+                'Gd2O3': '#c11a2b',
+                'G4_SILICON_DIOXIDE': '#457b9d',
+                'SiO2': '#457b9d',
+                'AIR': '#ffffff',
+                'G4_AIR': '#ffffff',
+                'Spacer': '#f4a261'
             }
 
-            z_pos = 0.0  # Axial position along fiber
-            for i, (name, layer_type, ir, orad, L) in enumerate(layers):
-                # Determine color
-                color = 'gray'
-                for key, col in colors.items():
-                    if key in name or key in layer_type:
-                        color = col
+            sensor_type = self.sensor_type.currentText() if hasattr(self, 'sensor_type') else "End-Face Coated FPI"
+            max_radius = max(layer[4] for layer in layers) * 1.2
+
+            # === Step 1: Draw coaxial core and cladding over same 5 mm ===
+            z_start = 0.0
+            total_length = max(layer[5] for layer in layers)
+
+            for name, mat_name, layer_type, ir, orad, L in layers:
+                if "Coating" in name or "Cavity" in name:
+                    continue
+
+                color = color_map.get(mat_name, '#8d99ae')
+
+                rect = plt.Rectangle((z_start, -orad), total_length, 2*orad,
+                                facecolor=color, edgecolor='black', linewidth=0.8, alpha=0.8)
+                ax.add_patch(rect)
+
+                if layer_type == "Hollow Cylinder":
+                    hole = plt.Rectangle((z_start, -ir), total_length, 2*ir,
+                                    facecolor='white', edgecolor='none')
+                    ax.add_patch(hole)
+                    label_y = (ir + orad) / 2
+                    text_color = 'white'
+                else:
+                    label_y = orad + 2
+                    text_color = 'black'
+
+                ax.text(z_start + total_length/2, label_y, name,
+                        fontsize=7, ha='center', va='bottom', color=text_color, weight='bold')
+
+            # === Step 2: Draw microcavity (if present) ===
+            cavity_end = total_length  # ✅ Default fallback value
+            if sensor_type == "In-Fiber Microcavity":
+                cavity_layer = None
+                for name, mat_name, layer_type, ir, orad, L in layers:
+                    if "Cavity" in name or mat_name == "G4_AIR":
+                        cavity_layer = (name, ir, orad, L)
                         break
 
-                # Draw geometry based on type
-                if layer_type == "End-Face Disk":
-                    # Thin axial disk at tip
-                    ax.fill_betweenx([z_pos, z_pos + L], 0, orad,
-                                color=color, edgecolor='black', linewidth=0.8, alpha=0.8)
-                    # Label on the right
-                    ax.text(orad + 2, z_pos + L/2, name,
-                            fontsize=7, va='center', ha='left', color='black', weight='bold')
-                    z_pos += L
+                if cavity_layer is not None:
+                    name, cav_inner_r, cav_outer_r, cav_axial_len = cavity_layer
 
-                elif layer_type == "Solid Cylinder":
-                    # Solid cylinder from center
-                    ax.fill_betweenx([z_pos, z_pos + L], 0, orad,
-                                color=color, edgecolor='black', linewidth=0.8, alpha=0.8)
-                    ax.text(orad + 2, z_pos + L/2, name,
-                            fontsize=7, va='center', ha='left', color='black', weight='bold')
-                    z_pos += L
+                    try:
+                        cav_zpos_um = float(self.cav_zpos.text())
+                    except:
+                        cav_zpos_um = -2000.0
+                    cav_zpos_mm = cav_zpos_um / 1000.0
 
-                elif layer_type == "TAPERED_SECTION":
-                    # Tapered section: draw trapezoid
-                    x_left = [z_pos, z_pos + L, z_pos + L, z_pos]
-                    y_bottom = [ir, ir, orad, orad]  # Assuming outer radius changes
-                    ax.fill(x_left, y_bottom, color=color, edgecolor='black', alpha=0.8)
-                    ax.text(z_pos + L/2, (ir + orad)/2, name,
-                            fontsize=7, va='center', ha='center', color='white', weight='bold')
-                    z_pos += L
+                    mid_z = total_length / 2.0
+                    cavity_center_z = mid_z + cav_zpos_mm
+                    cavity_start = cavity_center_z - cav_axial_len / 2.0
+                    cavity_end = cavity_center_z + cav_axial_len / 2.0  # ✅ Now safely assigned
 
-                else:
-                    # Hollow Cylinder or MICROCAVITY_SPACER
-                    ax.fill_betweenx([z_pos, z_pos + L], ir, orad,
-                                color=color, edgecolor='black', linewidth=0.8, alpha=0.8)
-                    ax.text(orad + 2, z_pos + L/2, name,
-                            fontsize=7, va='center', ha='left', color='black', weight='bold')
-                    z_pos += L
+                    # Partial radial cut (only halfway into cladding)
+                    cut_depth_fraction = 0.5
+                    effective_outer_r = cav_inner_r + (cav_outer_r - cav_inner_r) * cut_depth_fraction
 
-            ax.set_xlim(0, max(layer[3] for layer in layers) * 1.5)
-            ax.set_ylim(-0.1, z_pos + 0.5)
+                    outer_rect = plt.Rectangle(
+                        (cavity_start, -effective_outer_r), cav_axial_len, 2*effective_outer_r,
+                        facecolor='white', edgecolor='red', linewidth=1.5, hatch='///', alpha=0.6
+                    )
+                    inner_rect = plt.Rectangle(
+                        (cavity_start, -cav_inner_r), cav_axial_len, 2*cav_inner_r,
+                        facecolor='white', edgecolor='none'
+                    )
 
-        ax.set_xlabel("Radius (μm)")
-        ax.set_ylabel("Z Position (mm)")
-        ax.set_title("Fiber Sensor Structure Preview")
-        ax.grid(True, alpha=0.3)
+                    ax.add_patch(outer_rect)
+                    ax.add_patch(inner_rect)
+                    ax.text(cavity_center_z, effective_outer_r + 2, "Microcavity",
+                            fontsize=7, ha='center', va='bottom', color='red', weight='bold', style='italic')
+
+            # === Step 3: Draw coatings at tip (exaggerated visually) ===
+            coating_z = total_length
+            for name, mat_name, layer_type, ir, orad, L in layers:
+                if "Coating" in name or "coating" in name:
+                    real_thickness = L
+                    display_thickness = max(real_thickness * 50, 0.05)
+                    color = color_map.get(mat_name, '#8d99ae')
+                    disk_orad = max_radius * 1.05
+
+                    rect = plt.Rectangle((coating_z, -disk_orad), display_thickness, 2*disk_orad,
+                                    facecolor=color, edgecolor='black', linewidth=0.8, alpha=0.8)
+                    ax.add_patch(rect)
+                    ax.text(coating_z + display_thickness/2, disk_orad + 2, name,
+                            fontsize=7, ha='center', va='bottom', color='black', weight='bold')
+                    coating_z += display_thickness
+
+            # ✅ Safe to use cavity_end here — always defined
+            final_length = max(coating_z, cavity_end) * 1.1 if sensor_type == "In-Fiber Microcavity" else coating_z * 1.1
+            ax.set_xlim(0, final_length)
+            ax.set_ylim(-max_radius, max_radius)
+            ax.set_xlabel("Axial Position Z (mm)")
+            ax.set_ylabel("Radial Position Y (μm)")
+            ax.set_title("Fiber Sensor Structure (YZ Side View)")
+            ax.grid(True, alpha=0.3, axis='x')
+
         self.preview_canvas.draw()
+        self.preview_canvas.figure.savefig("sensor_preview.png", dpi=150, bbox_inches='tight')
 
     def on_energy_mode_change(self):
         mode = self.energy_mode.currentText()
@@ -998,13 +1060,13 @@ class FiberSimulationUI(QMainWindow):
                     f.write("# Source Setup: Transverse Illumination for Microcavity\n")
                     f.write("/gps/pos/type Plane\n")
                     f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 100 um\n")           # Cover radial extent
-                    f.write("/gps/pos/centre 0 0 0 mm\n")         # At cavity center
-                    f.write("/gps/rot/z 90 deg\n")                # Emit in X-Y plane (transverse)
-                    #f.write("/gps/direction 0 0 -1\n")  # ✅ Correct command                            # Point backward into fiber
+                    f.write("/gps/pos/radius 83.5 um\n")           # Cover radial extent
+                    f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
+                   # Emit backward along +Z axis (into fiber)
                     f.write("/gps/ang/type iso\n")
-                    f.write("/gps/ang/mintheta 0 deg\n")              # Min polar angle
-                    f.write("/gps/ang/maxtheta 10 deg\n")     # Wide cone
+                    f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
+                    f.write("/gps/ang/maxtheta 180 deg\n")   # Directly backward    # Focused cone      # Small forward cone
+                    # Wide cone
                     f.write("/gps/ene/type Mono\n")
                     f.write(f"/gps/particle {particle}\n")
                     f.write(f"/gps/energy {energy}\n\n")
@@ -1015,11 +1077,11 @@ class FiberSimulationUI(QMainWindow):
                     f.write("/gps/pos/type Plane\n")
                     f.write("/gps/pos/shape Circle\n")
                     f.write("/gps/pos/radius 83.05 um\n")         # Slightly larger than coating
-                    f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Just in front of tip
-                    f.write("/gps/direction 0 0 -1\n")  # ✅ Correct command                            # Point backward into fiber
+                    f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
+                    # Emit backward along +Z axis (into fiber)
                     f.write("/gps/ang/type iso\n")
-                    f.write("/gps/ang/mintheta 0 deg\n")              # Min polar angle
-                    f.write("/gps/ang/maxtheta 10 deg\n")       # Forward-peaked cone
+                    f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
+                    f.write("/gps/ang/maxtheta 180 deg\n")   # Directly backward
                     f.write("/gps/ene/type Mono\n")
                     f.write(f"/gps/particle {particle}\n")
                     f.write(f"/gps/energy {energy}\n\n")
@@ -1034,74 +1096,6 @@ class FiberSimulationUI(QMainWindow):
                 f.write(f"/run/beamOn {n_events}\n")
 
             self.log.append(f"✅ Generated input.mac with {n_events} events")
-            
-        except Exception as e:
-            self.log.append(f"❌ Failed to generate input.mac: {str(e)}")
-
-    def generate_input_mac(self):
-        try:
-            out_dir = self.output_folder.text()
-            mac_path = os.path.join(out_dir, "input.mac")
-
-            with open(mac_path, 'w') as f:
-                f.write("# Geant4 Macro File - Auto-generated\n")
-                f.write("# End-Face Fiber Illumination Setup\n\n")
-
-                # === General Particle Source (GPS) ===
-                particle = "gamma"
-                energy = "0.662 MeV"
-
-                if hasattr(self, 'particle_combo'):
-                    particle = self.particle_combo.currentText().lower()
-
-                if hasattr(self, 'energy_input'):
-                    try:
-                        energy_val = float(self.energy_input.text())
-                        energy = f"{energy_val:.6f} MeV"
-                    except:
-                        pass
-
-                # Determine outer radius from layers (use cladding or coating)
-                fiber_radius_um = 75.0  # Default
-                try:
-                    for i in range(self.layer_table.rowCount()):
-                        w = lambda j: self.layer_table.cellWidget(i, j)
-                        name = w(0).text().strip()
-                        orad_str = w(4).text().strip() if w(4) else ""
-                        if orad_str.replace('.', '').isdigit():
-                            orad = float(orad_str)
-                            # Use largest radius (e.g., Gd2O3 coating)
-                            if "Coating" in name or "coating" in name:
-                                fiber_radius_um = max(fiber_radius_um, orad)
-                    # Add margin to ensure full coverage
-                    beam_radius_um = fiber_radius_um * 1.1
-                except Exception as e:
-                    self.log.append(f"⚠️ Using default beam radius: {fiber_radius_um} μm")
-
-                # GPS Configuration for end-face illumination
-                f.write("# Source Setup: End-Face Illumination\n")
-                f.write("/gps/pos/type Plane\n")
-                f.write("/gps/pos/shape Circle\n")
-                f.write(f"/gps/pos/radius {beam_radius_um} um\n")           # Slightly larger than coating
-                f.write("/gps/pos/centre 0 0 -0.1 mm\n")                   # Just in front of fiber tip
-                f.write("/gps/direction 0 0 -1\n")  # ✅ Correct command                            # Point backward into fiber
-                f.write("/gps/ang/type iso\n")
-                f.write("/gps/ang/mintheta 0 deg\n")              # Min polar angle
-                f.write("/gps/ang/maxtheta 10 deg\n")                              # Forward-peaked cone
-                f.write("/gps/ene/type Mono\n")
-                f.write(f"/gps/particle {particle}\n")
-                f.write(f"/gps/energy {energy}\n\n")
-
-                # Run Settings
-                n_events = 1000
-                if hasattr(self, 'num_particles'):
-                    try:
-                        n_events = int(self.num_particles.text())
-                    except:
-                        pass
-                f.write(f"/run/beamOn {n_events}\n")
-
-            self.log.append(f"✅ Generated input.mac with {n_events} events for end-face illumination")
             
         except Exception as e:
             self.log.append(f"❌ Failed to generate input.mac: {str(e)}")
@@ -1148,41 +1142,67 @@ class FiberSimulationUI(QMainWindow):
         ax.set_ylim(-0.1, z_pos + 0.5)
 
     def plot_microcavity(self, ax):
-        """Draw in-fiber microcavity: transverse hole through core/cladding"""
-        # Fiber body
-        z_fiber = 5.0  # mm
-        ax.fill_betweenx([0, z_fiber], 0, 75, color='lightblue', alpha=0.6, label="Cladding")
-        ax.fill_betweenx([0, z_fiber], 0, 4.1, color='blue', alpha=0.8, label="Core")
+        """Draw in-fiber microcavity: transverse rectangular trench cutting through core/cladding"""
+        # Total fiber length based on layer table
+        total_length_mm = sum(L for _, _, _, _, _, L in self.get_layers_from_table())
+        mid_z = total_length_mm / 2.0  # Center of fiber
 
-        # Cavity parameters from UI
         try:
-            cav_radius = float(self.cav_radius.text())     # μm
-            cav_length = float(self.cav_length.text())     # μm → convert to mm
-            cav_zpos = float(self.cav_zpos.text())         # μm → convert to mm
-            axis = self.cav_axis_combo.currentText()       # X or Y
-        except:
-            cav_radius, cav_length, cav_zpos, axis = 5.0, 150.0, -2000.0, "X"
+            cav_radius_um = float(self.cav_radius.text())       # Radial depth from cladding edge
+            cav_axial_len_um = float(self.cav_length.text())    # Axial length of cavity
+            cav_z_offset_um = float(self.cav_zpos.text())       # Offset from center
+            drill_axis = self.cav_axis.currentText()            # 'X' or 'Y'
+        except Exception as e:
+            print(f"Error reading cavity params: {e}")
+            cav_radius_um, cav_axial_len_um, cav_z_offset_um, drill_axis = 5.0, 150.0, -2000.0, "X"
 
-        cav_zpos_mm = cav_zpos * 1e-3  # μm → mm
-        cav_length_mm = cav_length * 1e-3
+        # Convert to mm
+        cav_radius_mm = cav_radius_um * 1e-3
+        cav_axial_len_mm = cav_axial_len_um * 1e-3
+        cav_zpos_mm = mid_z + (cav_z_offset_um * 1e-3)
 
-        if axis == "X":
-            # Drilled along X-axis → appears as circle in Y-Z plane
-            center_y = 0
-            ax.add_patch(Circle((center_y, cav_zpos_mm), cav_radius,
-                                color='gray', alpha=0.7, label=f"Cavity ({axis})"))
-            ax.text(center_y + cav_radius + 2, cav_zpos_mm, "Microcavity", 
-                    ha='left', va='center', fontsize=9, color='black')
-        else:
-            # Drilled along Y-axis → same visual
-            center_x = 0
-            ax.add_patch(Circle((center_x, cav_zpos_mm), cav_radius,
-                                color='gray', alpha=0.7, label=f"Cavity ({axis})"))
-            ax.text(center_x + cav_radius + 2, cav_zpos_mm, "Microcavity", 
-                    ha='left', va='center', fontsize=9, color='black')
+        # Define cavity bounds
+        cavity_start_z = cav_zpos_mm - cav_axial_len_mm / 2
+        cavity_end_z = cav_zpos_mm + cav_axial_len_mm / 2
+        cavity_outer_r = 75.0 + cav_radius_um  # From cladding radius outward
+        cavity_inner_r = 75.0                 # Start at cladding outer edge
 
-        ax.set_xlim(-40, 90)
-        ax.set_ylim(cav_zpos_mm - 1.0, cav_zpos_mm + 1.0)
+        # Draw hollow rectangle representing removed material
+        rect = plt.Rectangle(
+            (cavity_start_z, -cavity_outer_r),
+            cavity_end_z - cavity_start_z,
+            2 * cavity_outer_r,
+            facecolor='white',
+            edgecolor='red',
+            linewidth=1.5,
+            hatch='///',
+            alpha=0.6,
+            label="Microcavity"
+        )
+        ax.add_patch(rect)
+
+        # Optional: draw inner boundary to highlight transition
+        inner_rect = plt.Rectangle(
+            (cavity_start_z, -cavity_inner_r),
+            cavity_end_z - cavity_start_z,
+            2 * cavity_inner_r,
+            facecolor='white',
+            edgecolor='none'
+        )
+        ax.add_patch(inner_rect)
+
+        # Label
+        ax.text(
+            (cavity_start_z + cavity_end_z) / 2,
+            cavity_outer_r + 2,
+            "Microcavity",
+            fontsize=7,
+            ha='center',
+            va='bottom',
+            color='red',
+            weight='bold',
+            style='italic'
+        )
 
     def browse_spectrum_file(self):
         """Open file dialog to select a custom energy spectrum file"""
@@ -1332,30 +1352,6 @@ class FiberSimulationUI(QMainWindow):
         except Exception as e:
             QMessageBox.critical(self, "Load Error", f"Failed to load geometry:\n{str(e)}")
     
-    def create_output_tab(self):
-        widget = QWidget()
-        layout = QVBoxLayout()
-        self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
-        layout.addWidget(self.canvas)
-        btn_export = QPushButton("💾 Export Results (excel)")
-        btn_export.setStyleSheet("font-size: 14px; padding: 8px;")
-        btn_export.clicked.connect(self.export_results)
-        layout.addWidget(btn_export)
-
-        # === Analysis Button ===
-        btn_analyze = QPushButton("🔬 Analyze Dose")
-        btn_analyze.setStyleSheet("font-size: 14px; padding: 8px;")
-        btn_analyze.clicked.connect(self.analyze_dose)
-        layout.addWidget(btn_analyze)
-
-        # === Export Dose Summary Button ===
-        btn_export_summary = QPushButton("📄 Export Dose Summary")
-        btn_export_summary.setStyleSheet("font-size: 14px; padding: 8px;")
-        btn_export_summary.clicked.connect(self.export_dose_summary)
-        layout.addWidget(btn_export_summary)
-        widget.setLayout(layout)
-        return widget
-
     def kill_hanging_docker_processes(self):
         try:
             result = subprocess.run(
@@ -1730,131 +1726,144 @@ class FiberSimulationUI(QMainWindow):
         
     ############### Dose Analysis ################
     def analyze_dose(self):
-        if not hasattr(self, 'output_folder'):
-            QMessageBox.warning(self, "No Output", "Run simulation first.")
-            return
-        energy_dir = os.path.join(self.output_folder.text(), "layer_energies")
-        if not os.path.exists(energy_dir):
-            QMessageBox.warning(self, "No Data", "Run simulation and load results first.")
-            return
-
         try:
-            # Load material properties from materials.json
+            if self.dose_data is None or len(self.dose_data) == 0:
+                self.log.append("❌ No dose data to analyze.")
+                return
+
+            results = []
+            total_energy_j = 0.0
+
+            # Load material properties
             materials_file = os.path.join(os.path.dirname(__file__), "materials.json")
             with open(materials_file, 'r') as f:
                 material_props = json.load(f)
             self.log.append(f"✅ Loaded {len(material_props)} material properties")
 
-            results = []
-            # CLADDING_RADIUS_UM = 75.0  # For disk area
+            # === Step 1: Identify Core & Cladding from rows 0 and 1 ===
+            core_name = None
+            clad_name = None
+            coating_rows = []
 
             for i in range(self.layer_table.rowCount()):
                 w = lambda j: self.layer_table.cellWidget(i, j)
-                name = w(0).text().strip()
-                mat_name = w(1).currentText().strip()
+                name = str(w(0).text()).strip()
+                mat_name = str(w(1).currentText()).strip()
                 ir_um = float(w(3).text())
                 orad_um = float(w(4).text())
                 length_mm = float(w(5).text())
 
-                # ✅ Define layer_category based on type
-                layer_type_str = w(2).currentText() if isinstance(w(2), QComboBox) else "Hollow Cylinder"
-
-                if any(kw in name for kw in ['Coating', 'TI_OXIDE', 'GADOLINIA']):
-                    layer_category = "End-Face Disk"
-                elif abs(ir_um - 0.0) < 1e-6:
-                    layer_category = "Solid Cylinder"
+                if i == 0:
+                    core_name = name
+                elif i == 1:
+                    clad_name = name
                 else:
-                    layer_category = "Hollow Cylinder"
+                    coating_rows.append({
+                        'index': i,
+                        'name': name,
+                        'material': mat_name,
+                        'ir': ir_um,
+                        'orad': orad_um,
+                        'length': length_mm
+                    })
 
-                vol_name_pv = name + "_PV"
+            self.log.append(f"🔹 Identified: Core='{core_name}', Cladding='{clad_name}'")
+            if coating_rows:
+                self.log.append(f"🎨 Detected {len(coating_rows)} functional coating layer(s):")
+                for c in coating_rows:
+                    self.log.append(f"   - {c['name']} ({c['material']})")
 
-                # Get material properties
-                props = material_props.get(mat_name, {})
-                rho_gcm3 = props.get('density_g_cm3', 2.20)
-                specific_heat = props.get('specific_heat_J_per_kg_K', 700)
-                dn_dT = props.get('dn_dT_per_K', 1.2e-5)
+            # === Step 2: Analyze Dose in Core and Cladding ===
+            for vol_base, label, r_inner, r_outer, L_mm, mat_key in [
+                (core_name + "_PV", "Core", 0.0, float(self.layer_table.cellWidget(0, 4).text()),
+                float(self.layer_table.cellWidget(0, 5).text()), self.layer_table.cellWidget(0, 1).currentText()),
+                (clad_name + "_PV", "Cladding", float(self.layer_table.cellWidget(1, 3).text()),
+                float(self.layer_table.cellWidget(1, 4).text()),
+                float(self.layer_table.cellWidget(1, 5).text()), self.layer_table.cellWidget(1, 1).currentText())
+            ]:
+                df_layer = self.dose_data[self.dose_data['Volume'] == vol_base]
+                absorbed_energy_j = (df_layer['Edep_keV'] * 1.602e-16).sum() if len(df_layer) > 0 else 0.0
 
-                rho_kgm3 = rho_gcm3 * 1000
-                thickness_nm = round((orad_um - ir_um) * 1000, 1)
+                # Geometry
+                thickness_m = L_mm * 1e-3
+                area_m2 = np.pi * ((r_outer*1e-6)**2 - (r_inner*1e-6)**2)
+                density_kg_m3 = material_props.get(mat_key, {}).get('density_g_cm3', 2.20) * 1000
+                heat_capacity_j_kgk = material_props.get(mat_key, {}).get('specific_heat_J_per_kg_K', 700)
 
-                # === Compute Volume & Mass Based on Type ===
-                R_m = orad_um * 1e-6  # outer radius in meters
-                L_m = length_mm * 1e-3
-
-                volume_m3 = 0.0
-
-                if layer_category == "End-Face Disk":
-                    # Annular shell volume
-                    R_m = orad_um * 1e-6
-                    r_m = ir_um * 1e-6
-                    L_m = length_mm * 1e-3
-                    volume_m3 = 3.14159 * ((R_m**2) - (r_m**2)) * L_m
-                elif layer_category == "Solid Cylinder":
-                    R_m = orad_um * 1e-6
-                    L_m = length_mm * 1e-3
-                    volume_m3 = 3.14159 * (R_m**2) * L_m
-                else:
-                    # Hollow cylinder
-                    R_m = orad_um * 1e-6
-                    r_m = ir_um * 1e-6
-                    L_m = length_mm * 1e-3
-                    volume_m3 = 3.14159 * ((R_m**2) - (r_m**2)) * L_m
-
-                # Read saved energy
-                energy_file = os.path.join(energy_dir, f"energy_{name}.txt")
-                if os.path.exists(energy_file):
-                    try:
-                        with open(energy_file, 'r') as f:
-                            for line in f:
-                                if line.startswith("Total_Energy_J:"):
-                                    total_energy_j = float(line.split(":")[1].strip())
-                                    break
-                    except Exception as e:
-                        self.log.append(f"⚠️ Failed to read {energy_file}: {str(e)}")
-                else:
-                    self.log.append(f"⚠️ No energy file for {name}")
-
-                mass_kg = volume_m3 * rho_kgm3
-                dose_gy = total_energy_j / max(mass_kg, 1e-20)
-                delta_T_K = dose_gy / specific_heat
-                delta_n = dn_dT * delta_T_K
+                mass_kg = density_kg_m3 * area_m2 * thickness_m
+                delta_t_k = absorbed_energy_j / (mass_kg * heat_capacity_j_kgk) if mass_kg > 0 else 0
+                dn_dt = material_props.get(mat_key, {}).get('dn_dT_per_K', 1.2e-5)
+                delta_n = dn_dt * delta_t_k
 
                 results.append({
-                    'Layer': name,
-                    'Material': mat_name,
-                    'Type': layer_category,
-                    'Inner_Radius_um': ir_um,
-                    'Outer_Radius_um': orad_um,
-                    'Thickness_nm': thickness_nm,
-                    'Length_mm': length_mm,
+                    'Layer': label,
+                    'Material': mat_key,
+                    'Type': 'Base Fiber',
+                    'Inner_Radius_um': r_inner,
+                    'Outer_Radius_um': r_outer,
+                    'Length_mm': L_mm,
                     'Mass_kg': mass_kg,
-                    'Energy_J': total_energy_j,
-                    'Dose_Gy': dose_gy,
-                    'Delta_T_K': delta_T_K,
+                    'Energy_J': absorbed_energy_j,
+                    'Dose_Gy': absorbed_energy_j / max(mass_kg, 1e-20),
+                    'Delta_T_K': delta_t_k,
                     'Delta_n': delta_n,
-                    'Specific_Heat_J_kgK': specific_heat,
-                    'dn_dT_per_K': dn_dT,
-                    'Step_Count': 0
+                    'Specific_Heat_J_kgK': heat_capacity_j_kgk,
+                    'dn_dT_per_K': dn_dt,
+                    'Step_Count': len(df_layer)
                 })
+                total_energy_j += absorbed_energy_j
 
-            # Store and display
+            # === Step 3: Analyze Coating Layers (Row 2+) ===
+            for c in coating_rows:
+                vol_name_pv = c['name'] + "_PV"
+                df_layer = self.dose_data[self.dose_data['Volume'] == vol_name_pv]
+                absorbed_energy_j = (df_layer['Edep_keV'] * 1.602e-16).sum() if len(df_layer) > 0 else 0.0
+
+                thickness_m = c['length'] * 1e-3
+                area_m2 = np.pi * ((c['orad']*1e-6)**2 - (c['ir']*1e-6)**2)
+                density_gcm3 = material_props.get(c['material'], {}).get('density_g_cm3', 5.0)
+                density_kg_m3 = density_gcm3 * 1000
+                heat_capacity_j_kgk = material_props.get(c['material'], {}).get('specific_heat_J_per_kg_K', 400)
+
+                mass_kg = density_kg_m3 * area_m2 * thickness_m
+                if mass_kg <= 0:
+                    self.log.append(f"⚠️ Zero mass for {name} — check geometry")
+                    mass_kg = 1e-20  # Prevent divide-by-zero
+                delta_t_k = absorbed_energy_j / (mass_kg * heat_capacity_j_kgk) if mass_kg > 0 else 0
+                dn_dt = material_props.get(c['material'], {}).get('dn_dT_per_K', 1.2e-5)
+                delta_n = dn_dt * delta_t_k
+
+                results.append({
+                    'Layer': c['name'],
+                    'Material': c['material'],
+                    'Type': 'Functional Coating',
+                    'Inner_Radius_um': c['ir'],
+                    'Outer_Radius_um': c['orad'],
+                    'Length_mm': c['length'],
+                    'Mass_kg': mass_kg,
+                    'Energy_J': absorbed_energy_j,
+                    'Dose_Gy': absorbed_energy_j / max(mass_kg, 1e-20),
+                    'Delta_T_K': delta_t_k,
+                    'Delta_n': delta_n,
+                    'Specific_Heat_J_kgK': heat_capacity_j_kgk,
+                    'dn_dT_per_K': dn_dt,
+                    'Step_Count': len(df_layer)
+                })
+                total_energy_j += absorbed_energy_j
+
+            # === Step 4: Store Results ===
             self.dose_summary_df = pd.DataFrame(results)
             self.display_analysis_results()
 
+            # === Step 5: Compute System-Level Response Using Sensitivity ===
             try:
-                S_exp_nm_per_RIU = float(self.sensitivity_input.text())
+                S_exp_nm_per_RIU = float(self.sensitivity_input.text())  # e.g., -78.8 nm/RIU
             except ValueError:
                 self.log.append("⚠️ Invalid sensitivity value. Using -78.8 nm/RIU.")
                 S_exp_nm_per_RIU = -78.8
 
-            # Compute effective parameters
-            total_energy_j = self.dose_summary_df['Energy_J'].sum()
-            total_mass_kg = self.dose_summary_df['Mass_kg'].sum()
-
-            if total_mass_kg > 0:
-                D_eff_Gy = total_energy_j / total_mass_kg
-            else:
-                D_eff_Gy = 0.0
+            # Assume dn = 1e-6 corresponds to 1 RIU change
+            dn_per_RIU = 1e-6
 
             # Weighted average Δn by energy deposition
             weighted_delta_n = (
@@ -1862,17 +1871,18 @@ class FiberSimulationUI(QMainWindow):
                 max(total_energy_j, 1e-30)
             )
 
+            # Total effective dose
+            total_mass_kg = self.dose_summary_df['Mass_kg'].sum()
+            D_eff_Gy = total_energy_j / max(total_mass_kg, 1e-20)
+
             # Predicted wavelength shift
-            delta_lambda_nm = S_exp_nm_per_RIU * weighted_delta_n
-            delta_lambda_pm = delta_lambda_nm * 1000  # Convert to pm
+            delta_lambda_nm = S_exp_nm_per_RIU * (weighted_delta_n / dn_per_RIU)
+            delta_lambda_pm = delta_lambda_nm * 1000
 
-            # Radiation-Induced Spectral Responsivity
-            if D_eff_Gy > 0:
-                responsivity_pm_per_Gy = delta_lambda_pm / D_eff_Gy
-            else:
-                responsivity_pm_per_Gy = 0.0
+            # Responsivity
+            responsivity_pm_per_Gy = delta_lambda_pm / D_eff_Gy if D_eff_Gy > 0 else 0.0
 
-            # Display in log
+            # Log final response
             self.log.append("\n🧩 System-Level Sensor Response:")
             self.log.append(f"  Effective Dose: {D_eff_Gy:.3e} Gy")
             self.log.append(f"  Effective Δn: {weighted_delta_n:.3e}")

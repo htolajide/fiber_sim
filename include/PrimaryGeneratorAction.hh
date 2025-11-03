@@ -1,12 +1,8 @@
-// include/PrimaryGeneratorAction.hh
-#ifndef PrimaryGeneratorAction_h
-#define PrimaryGeneratorAction_h
+#ifndef PRIMARY_GENERATOR_ACTION_HH
+#define PRIMARY_GENERATOR_ACTION_HH
 
 #include "G4VUserPrimaryGeneratorAction.hh"
-#include "globals.hh"
-
-// ✅ Include the actual header
-#include "G4ParticleGun.hh"  // ← This defines G4ParticleGun
+#include "G4GeneralParticleSource.hh"  // ✅ Include correct header
 
 class G4Event;
 
@@ -16,10 +12,10 @@ public:
     PrimaryGeneratorAction();
     virtual ~PrimaryGeneratorAction();
 
-    virtual void GeneratePrimaries(G4Event* event) override;
+    virtual void GeneratePrimaries(G4Event* event);
 
 private:
-    G4ParticleGun* fParticleGun;
+    G4GeneralParticleSource* fParticleGun;  // ✅ Now correct type
 };
 
 #endif

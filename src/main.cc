@@ -1,52 +1,64 @@
-// main.cc
+// src/main.cc
 #include "G4RunManager.hh"
 #include "G4UImanager.hh"
+
+// User actions and detector construction
+#include "DetectorConstruction.hh"
+#include "ActionInitialization.hh"
+
+// Physics list and models
+#include "FTFP_BERT.hh"                                // For FTFP_BERT
+#include "G4EmStandardPhysics_option4.hh"             // High-precision EM
+#include "G4DecayPhysics.hh"                          // Decay processes
+#include "G4RadioactiveDecayPhysics.hh"               // Radioactive decay
+
+// Visualization (optional)
 #include "G4VisExecutive.hh"
 #include "G4UIExecutive.hh"
 
-#include "QGSP_BERT_HP.hh"
-#include "G4EmStandardPhysics_option4.hh"
-#include "G4DecayPhysics.hh"
-#include "G4RadioactiveDecayPhysics.hh"
-
-#include "DetectorConstruction.hh"
-#include "PrimaryGeneratorAction.hh"
-#include "SteppingAction.hh"
-#include "G4EmParameters.hh"
-
 int main(int argc, char** argv) {
+    // Run manager
     G4RunManager* runManager = new G4RunManager;
 
-    DetectorConstruction* det = new DetectorConstruction;
-    runManager->SetUserInitialization(det);
+    // Set up detector
+    DetectorConstruction* detector = new DetectorConstruction();
+    runManager->SetUserInitialization(detector);
 
-    QGSP_BERT_HP* physics = new QGSP_BERT_HP;
-    physics->RegisterPhysics(new G4DecayPhysics());
-    physics->RegisterPhysics(new G4RadioactiveDecayPhysics());
-    runManager->SetUserInitialization(physics);
-    G4EmParameters::Instance()->SetAugerCascade(true);
-    G4EmParameters::Instance()->SetDeexcitationIgnoreCut(true);
+    // Set up physics
+    G4VModularPhysicsList* physicsList = new FTFP_BERT;                     // Base physics
+    physicsList->ReplacePhysics(new G4EmStandardPhysics_option4());         // Better low-energy EM
+    physicsList->RegisterPhysics(new G4DecayPhysics());
+    physicsList->RegisterPhysics(new G4RadioactiveDecayPhysics());
+    runManager->SetUserInitialization(physicsList);
 
-    runManager->SetUserAction(new PrimaryGeneratorAction);
-    runManager->SetUserAction(new SteppingAction);
+    // Set up action initialization
+    ActionInitialization* actions = new ActionInitialization();
+    runManager->SetUserInitialization(actions);
 
+    // Initialize
     runManager->Initialize();
 
-    G4VisExecutive* vis = new G4VisExecutive;
-    vis->Initialize();
+    // Visualization manager
+    G4VisManager* visManager = new G4VisExecutive;
+    visManager->Initialize();
 
-    G4UImanager* UI = G4UImanager::GetUIpointer();
+    // Get UI manager
+    G4UImanager* UImanager = G4UImanager::GetUIpointer();
 
     if (argc == 1) {
+        // Interactive mode
         G4UIExecutive ui(argc, argv);
-        UI->ApplyCommand("/control/execute init_vis.mac");
+        UImanager->ApplyCommand("/control/execute vis.mac");
         ui.SessionStart();
     } else {
+        // Batch mode
+        G4String command = "/control/execute ";
         G4String fileName = argv[1];
-        UI->ApplyCommand("/control/execute " + fileName);
+        UImanager->ApplyCommand(command + fileName);
     }
 
-    delete vis;
+    // Cleanup
+    delete visManager;
     delete runManager;
 
     return 0;

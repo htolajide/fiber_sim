@@ -9,22 +9,23 @@
 // Define static member
 bool SteppingAction::headerWritten = false;
 
+// src/SteppingAction.cc
 SteppingAction::SteppingAction()
 {
-    // --- Write to current directory ---
+    // Open in project root (visible to host)
     std::ofstream clearFile("dose_per_step.txt", std::ios::out | std::ios::trunc);
     clearFile.close();
 
     doseFile.open("dose_per_step.txt", std::ios::app);
 
+    if (!doseFile.is_open()) {
+        G4cout << "❌ Failed to open dose_per_step.txt" << G4endl;
+        return;
+    }
+
     if (!headerWritten) {
         doseFile << "# Volume\tX[um]\tY[um]\tZ[um]\tEdep[keV]\tLength[nm]" << G4endl;
         headerWritten = true;
-    }
-
-    if (!doseFile.is_open()) {
-        G4Exception("SteppingAction::SteppingAction", "FileOpenError", FatalException,
-                    "Could not open dose_per_step.txt");
     }
 }
 

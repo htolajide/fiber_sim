@@ -30,6 +30,29 @@
     "refractive_index": 1.45
   },
 
+  "SiO2": {
+    "name": "Silicon Dioxide (Amorphous)",
+    "formula": "SiO2",
+    "category": "Dielectric Coating",
+    "refractive_index": 1.46,
+    "density_g_cm3": 2.65,
+    "specific_heat_J_per_kg_K": 740,
+    "dn_dT_per_K": 1.1e-5,
+    "thermal_expansion_per_K": 0.5e-6
+  },
+
+  "Si": {
+    "name": "Crystalline Silicon",
+    "formula": "Si",
+    "category": "Semiconductor",
+    "bandgap_eV": 1.12,
+    "refractive_index": 3.4,
+    "density_g_cm3": 2.33,
+    "specific_heat_J_per_kg_K": 710,
+    "dn_dT_per_K": 1.8e-4,
+    "thermal_expansion_per_K": 2.6e-6
+  },
+
   "TiO2": {
     "name": "Titanium Dioxide",
     "formula": "TiO2",
@@ -85,6 +108,29 @@
     "specific_heat_J_per_kg_K": 150,
     "dn_dT_per_K": 1.5e-5,
     "thermal_expansion_per_K": 5.8e-6
+  },
+
+  "ZnO": {
+    "name": "Zinc Oxide",
+    "formula": "ZnO",
+    "category": "UV-Sensitive Coating",
+    "bandgap_eV": 3.37,
+    "refractive_index": 2.0,
+    "density_g_cm3": 5.61,
+    "specific_heat_J_per_kg_K": 500,
+    "dn_dT_per_K": 1.6e-5,
+    "thermal_expansion_per_K": 6.0e-6
+  },
+
+  "ITO": {
+    "name": "Indium Tin Oxide",
+    "formula": "In-Sn-O",
+    "category": "Transparent Conductive Oxide",
+    "refractive_index": 1.9,
+    "density_g_cm3": 7.14,
+    "specific_heat_J_per_kg_K": 250,
+    "dn_dT_per_K": 1.4e-5,
+    "thermal_expansion_per_K": 4.5e-6
   },
 
   "SiO2_solgel": {
