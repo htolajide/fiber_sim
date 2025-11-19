@@ -1060,12 +1060,12 @@ class FiberSimulationUI(QMainWindow):
                     f.write("# Source Setup: Transverse Illumination for Microcavity\n")
                     f.write("/gps/pos/type Plane\n")
                     f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 83.5 um\n")           # Cover radial extent
+                    f.write("/gps/pos/radius 82.5 um\n")           # Cover radial extent
                     f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
-                   # Emit backward along +Z axis (into fiber)
+                #   Emit backward along +Z axis (into fiber)
                     f.write("/gps/ang/type iso\n")
-                    f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
-                    f.write("/gps/ang/maxtheta 180 deg\n")   # Directly backward    # Focused cone      # Small forward cone
+                #   f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
+                    f.write("/gps/ang/maxtheta 0 deg\n")   # Directly backward    # Focused cone      # Small forward cone
                     # Wide cone
                     f.write("/gps/ene/type Mono\n")
                     f.write(f"/gps/particle {particle}\n")
@@ -1076,12 +1076,12 @@ class FiberSimulationUI(QMainWindow):
                     f.write("# Source Setup: End-Face Illumination\n")
                     f.write("/gps/pos/type Plane\n")
                     f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 83.05 um\n")         # Slightly larger than coating
+                    f.write("/gps/pos/radius 82.05 um\n")         # Slightly larger than coating
                     f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
                     # Emit backward along +Z axis (into fiber)
                     f.write("/gps/ang/type iso\n")
-                    f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
-                    f.write("/gps/ang/maxtheta 180 deg\n")   # Directly backward
+                    # f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
+                    f.write("/gps/ang/maxtheta  0 deg\n")   # Directly backward
                     f.write("/gps/ene/type Mono\n")
                     f.write(f"/gps/particle {particle}\n")
                     f.write(f"/gps/energy {energy}\n\n")
@@ -1652,39 +1652,77 @@ class FiberSimulationUI(QMainWindow):
         ax.clear()
 
         df = self.dose_data.copy()
+
+        # === Step 1: Diagnose units and content ===
+        print("🔍 Dose Data Info:")
+        print(f"   Total entries: {len(df)}")
+        print(f"   Columns: {list(df.columns)}")
+        print(f"   Unique Volumes: {df['Volume'].unique()}")
+        print(f"   Z range: [{df['Z'].min():.2f}, {df['Z'].max():.2f}] mm?")
+        print(f"   Edep_keV range: [{df['Edep_keV'].min():.3f}, {df['Edep_keV'].max():.3f}]")
+
+        # === Step2: Compute radial position ===
         r = np.sqrt(df['X']**2 + df['Y']**2)
-        z = df['Z']
+
+        # Assume Z is in mm → convert to μm for consistency
+        z = df['Z'] * 1000  # mm → μm
+
         E = df['Edep_keV']
 
-        mask = df['Volume'] != 'World'
-        sc = ax.scatter(r[mask], z[mask], c=E[mask], cmap='hot_r', s=5, alpha=0.9)
+        # === Step3: Filter out non-fiber volumes safely ===
+        # Don't just remove 'World' — include partial matches
+        world_like = df['Volume'].str.contains('World|Air|Vacuum', case=False, na=False)
+        fiber_mask = ~world_like
+
+        # Optional: Include only known layers
+        known_layers = ['Core', 'Cladding', 'TiO2', 'Gd2O3', 'Coating']
+        layer_mask = pd.Series([False] * len(df))
+        for lname in known_layers:
+            layer_mask |= df['Volume'].str.contains(lname, case=True, na=False)
+
+        mask = fiber_mask & layer_mask
+        if mask.sum() == 0:
+            mask = fiber_mask  # Fallback: show all non-world points
+
+        if mask.sum() == 0:
+            self.log.append("⚠️ No valid energy deposits found for plotting.")
+            return
+
+        # === Step4: Scatter plot ===
+        sc = ax.scatter(r[mask], z[mask],
+                        c=E[mask], cmap='hot_r', s=8, alpha=0.9,
+                        edgecolor='none')
 
         ax.set_xlabel("Radial Position (μm)")
-        ax.set_ylabel("Axial Position (μm)")
+        ax.set_ylabel("Axial Position Z (μm)")
         ax.set_title("Energy Deposits in Fiber Sensor")
-        ax.set_xlim(0, 80)
-        ax.set_ylim(-2600, 2600)
 
-        # ✅ Safely remove old colorbar
+        # Adjust axis limits based on actual data
+        r_min, r_max = r[mask].min(), r[mask].max()
+        z_min, z_max = z[mask].min(), z[mask].max()
+
+        ax.set_xlim(0, max(80, r_max * 1.1))
+        ax.set_ylim(z_min - 100, z_max + 100)
+
+        # === Step5: Colorbar ===
         if hasattr(self, 'colorbar') and self.colorbar is not None:
             try:
-                # Temporarily disconnect from figure before removing
                 cbar = self.colorbar
-                self.colorbar = None  # Prevent reuse
+                self.colorbar = None
                 cbar.ax.clear()
-                cbar.ax.figure.delaxes(cbar.ax)  # Force delete axes
+                cbar.ax.figure.delaxes(cbar.ax)
             except Exception as e:
-                print(f"Cleanup warning (safe to ignore): {e}")
+                print(f"Colorbar cleanup warning: {e}")
 
-        # ✅ Add new colorbar
         try:
-            self.colorbar = self.canvas.figure.colorbar(sc, ax=ax, label="Energy (keV)")
+            self.colorbar = self.canvas.figure.colorbar(sc, ax=ax, label="Energy Deposit (keV)")
         except Exception as e:
             print(f"Failed to create colorbar: {e}")
             self.colorbar = None
 
-        # ✅ Redraw
+        # === Step6: Redraw ===
         self.canvas.draw()
+        self.log.append(f"✅ Plotted {mask.sum()} energy deposits.")
     
     def load_material_density(self):
         """Load material properties from materials.json"""

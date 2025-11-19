@@ -276,7 +276,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
 
     for (const auto& lyr : layers) {
         G4String matName = lyr.material->GetName();
-        std::set<G4String> thinLayers = {"TiO2", "Gd2O3"};
+        std::set<G4String> thinLayers = {"TiO2", "Gd2O3", "ZrO2", "Al2O3", "HfO2", "ZnO"};  // Same as coating materials
 
         if (thinLayers.find(matName) != thinLayers.end()) {
             // Find matching logical volume by name
