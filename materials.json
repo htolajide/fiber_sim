@@ -16,7 +16,8 @@
     "specific_heat_J_per_kg_K": 1005,
     "dn_dT_per_K": 1.0e-6,
     "thermal_expansion_per_K": 3.4e-3,
-    "refractive_index": 1.000293
+    "refractive_index": 1.000293,
+    "color": "#ffffff"
   },
 
   "G4_SILICON_DIOXIDE": {
@@ -27,7 +28,8 @@
     "specific_heat_J_per_kg_K": 700,
     "dn_dT_per_K": 1.2e-5,
     "thermal_expansion_per_K": 5.0e-7,
-    "refractive_index": 1.45
+    "refractive_index": 1.45,
+    "color": "#457b9d"
   },
 
   "SiO2": {
@@ -38,7 +40,8 @@
     "density_g_cm3": 2.65,
     "specific_heat_J_per_kg_K": 740,
     "dn_dT_per_K": 1.1e-5,
-    "thermal_expansion_per_K": 0.5e-6
+    "thermal_expansion_per_K": 0.5e-6,
+    "color": "#a8dadc"
   },
 
   "Si": {
@@ -50,7 +53,8 @@
     "density_g_cm3": 2.33,
     "specific_heat_J_per_kg_K": 710,
     "dn_dT_per_K": 1.8e-4,
-    "thermal_expansion_per_K": 2.6e-6
+    "thermal_expansion_per_K": 2.6e-6,
+    "color": "#34495e"
   },
 
   "TiO2": {
@@ -62,7 +66,8 @@
     "density_g_cm3": 4.23,
     "specific_heat_J_per_kg_K": 680,
     "dn_dT_per_K": 1.0e-4,
-    "thermal_expansion_per_K": 7.0e-6
+    "thermal_expansion_per_K": 7.0e-6,
+    "color": "#e63946"
   },
 
   "Gd2O3": {
@@ -74,7 +79,8 @@
     "density_g_cm3": 7.41,
     "specific_heat_J_per_kg_K": 230,
     "dn_dT_per_K": 2.0e-5,
-    "thermal_expansion_per_K": 8.0e-6
+    "thermal_expansion_per_K": 8.0e-6,
+    "color": "#c11a2b"
   },
 
   "Al2O3": {
@@ -85,7 +91,8 @@
     "density_g_cm3": 3.97,
     "specific_heat_J_per_kg_K": 770,
     "dn_dT_per_K": 1.3e-5,
-    "thermal_expansion_per_K": 6.5e-6
+    "thermal_expansion_per_K": 6.5e-6,
+    "color": "#8d99ae"
   },
 
   "ZrO2": {
@@ -96,7 +103,8 @@
     "density_g_cm3": 5.68,
     "specific_heat_J_per_kg_K": 560,
     "dn_dT_per_K": 1.8e-5,
-    "thermal_expansion_per_K": 7.5e-6
+    "thermal_expansion_per_K": 7.5e-6,
+    "color": "#2a9d8f"
   },
 
   "HfO2": {
@@ -107,7 +115,8 @@
     "density_g_cm3": 9.68,
     "specific_heat_J_per_kg_K": 150,
     "dn_dT_per_K": 1.5e-5,
-    "thermal_expansion_per_K": 5.8e-6
+    "thermal_expansion_per_K": 5.8e-6,
+    "color": "#8338ec"
   },
 
   "ZnO": {
@@ -119,7 +128,8 @@
     "density_g_cm3": 5.61,
     "specific_heat_J_per_kg_K": 500,
     "dn_dT_per_K": 1.6e-5,
-    "thermal_expansion_per_K": 6.0e-6
+    "thermal_expansion_per_K": 6.0e-6,
+    "color": "#ffd60a"
   },
 
   "ITO": {
@@ -130,7 +140,8 @@
     "density_g_cm3": 7.14,
     "specific_heat_J_per_kg_K": 250,
     "dn_dT_per_K": 1.4e-5,
-    "thermal_expansion_per_K": 4.5e-6
+    "thermal_expansion_per_K": 4.5e-6,
+    "color": "#06d6a0"
   },
 
   "SiO2_solgel": {
@@ -140,6 +151,129 @@
     "refractive_index": 1.45,
     "density_g_cm3": 2.0,
     "specific_heat_J_per_kg_K": 750,
-    "dn_dT_per_K": 1.2e-5
+    "dn_dT_per_K": 1.2e-5,
+    "color": "#a8dadc"
+  },
+
+  "Y2O3": {
+    "name": "Yttrium Oxide",
+    "formula": "Y2O3",
+    "category": "Scintillator Matrix",
+    "refractive_index": 1.92,
+    "density_g_cm3": 5.01,
+    "specific_heat_J_per_kg_K": 400,
+    "dn_dT_per_K": 1.7e-5,
+    "thermal_expansion_per_K": 7.2e-6,
+    "color": "#ff6b6b"
+  },
+
+  "CeO2": {
+    "name": "Cerium Oxide",
+    "formula": "CeO2",
+    "category": "Radiation-Hard Coating",
+    "refractive_index": 2.2,
+    "density_g_cm3": 7.65,
+    "specific_heat_J_per_kg_K": 450,
+    "dn_dT_per_K": 1.9e-5,
+    "thermal_expansion_per_K": 6.8e-6,
+    "color": "#ee964b"
+  },
+
+  "B4C": {
+    "name": "Boron Carbide",
+    "formula": "B4C",
+    "category": "Neutron Converter",
+    "neutron_capture_barns": 760,
+    "refractive_index": 2.1,
+    "density_g_cm3": 2.52,
+    "specific_heat_J_per_kg_K": 1100,
+    "dn_dT_per_K": 1.2e-5,
+    "thermal_expansion_per_K": 5.6e-6,
+    "color": "#003049"
+  },
+
+  "LiF": {
+    "name": "Lithium Fluoride",
+    "formula": "LiF",
+    "category": "Neutron-to-Charged Particle Converter",
+    "neutron_capture_barns": 940,
+    "refractive_index": 1.39,
+    "density_g_cm3": 2.64,
+    "specific_heat_J_per_kg_K": 1500,
+    "dn_dT_per_K": 8.0e-6,
+    "thermal_expansion_per_K": 4.0e-6,
+    "color": "#fcbf49"
+  },
+
+  "CsI": {
+    "name": "Cesium Iodide",
+    "formula": "CsI",
+    "category": "Scintillator",
+    "refractive_index": 1.79,
+    "density_g_cm3": 4.51,
+    "specific_heat_J_per_kg_K": 200,
+    "dn_dT_per_K": 1.4e-4,
+    "thermal_expansion_per_K": 5.0e-6,
+    "color": "#d62828"
+  },
+
+  "LYSO": {
+    "name": "Lu-Yttrium Oxyorthosilicate",
+    "formula": "Lu1.8Y0.2SiO5:Ce",
+    "category": "Fast Scintillator",
+    "refractive_index": 1.82,
+    "density_g_cm3": 7.1,
+    "specific_heat_J_per_kg_K": 350,
+    "dn_dT_per_K": 1.6e-4,
+    "thermal_expansion_per_K": 6.0e-6,
+    "color": "#e9c46a"
+  },
+
+  "PbO": {
+    "name": "Lead Oxide",
+    "formula": "PbO",
+    "category": "High-Z Radiation Absorber",
+    "refractive_index": 2.6,
+    "density_g_cm3": 9.53,
+    "specific_heat_J_per_kg_K": 130,
+    "dn_dT_per_K": 2.0e-5,
+    "thermal_expansion_per_K": 1.4e-5,
+    "color": "#212121"
+  },
+
+  "SnO2": {
+    "name": "Tin Oxide",
+    "formula": "SnO2",
+    "category": "Transparent Conductive / Gas Sensing",
+    "refractive_index": 2.0,
+    "density_g_cm3": 6.95,
+    "specific_heat_J_per_kg_K": 270,
+    "dn_dT_per_K": 1.3e-5,
+    "thermal_expansion_per_K": 5.5e-6,
+    "color": "#6a4c93"
+  },
+
+  "BaTiO3": {
+    "name": "Barium Titanate",
+    "formula": "BaTiO3",
+    "category": "Ferroelectric / Electro-Optic",
+    "refractive_index": 2.4,
+    "density_g_cm3": 6.08,
+    "specific_heat_J_per_kg_K": 600,
+    "dn_dT_per_K": 2.5e-5,
+    "thermal_expansion_per_K": 1.0e-5,
+    "color": "#005f73"
+  },
+
+  "Bi2O3": {
+    "name": "Bismuth Oxide",
+    "formula": "Bi2O3",
+    "category": "High-Z Radiopacifier",
+    "refractive_index": 2.9,
+    "density_g_cm3": 8.9,
+    "specific_heat_J_per_kg_K": 120,
+    "dn_dT_per_K": 1.8e-5,
+    "thermal_expansion_per_K": 1.3e-5,
+    "color": "#0a9396"
   }
 }

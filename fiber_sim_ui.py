@@ -20,7 +20,7 @@ from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QFileDialog, QTextEdit,
     QSplitter, QFormLayout, QMessageBox, QTableWidget,
-    QHeaderView, QGroupBox, QCheckBox, QTableWidgetItem
+    QHeaderView, QGroupBox, QCheckBox, QColorDialog
 )
 from PyQt5.QtCore import Qt
 from PyQt5.QtCore import QThread, pyqtSignal
@@ -240,18 +240,29 @@ class MaterialDB:
         with open(self.db_file, 'w') as f:
             json.dump(default, f, indent=2)
 
-    def add_material(self, symbol, name, density, formula=None):
+    def add_material(self, symbol, name, density, formula=None, color=None):
         """
-        Add or update a material in the database
-        Example: add_material("Y2O3", "Yttrium Oxide", 5.01, "Y2O3")
+        Add or update a material in the database with optional color
+        Example: add_material("Y2O3", "Yttrium Oxide", 5.01, "Y2O3", "#ff6b6b")
         """
         if not formula:
             formula = symbol  # fallback
 
+        # Default color palette for auto-assignment
+        default_colors = ['#e63946', '#c11a2b', '#457b9d', '#2a9d8f', 
+                        '#8338ec', '#ffd60a', '#06d6a0', '#8d99ae']
+
+        # Auto-assign color if not provided
+        if color is None:
+            used_colors = [mat.get('color') for mat in self.materials.values() if 'color' in mat]
+            available = [c for c in default_colors if c not in used_colors]
+            color = available[0] if available else default_colors[len(self.materials) % len(default_colors)]
+
         self.materials[symbol] = {
             "name": name,
             "density_g_cm3": float(density),
-            "formula": formula
+            "formula": formula,
+            "color": color
         }
 
         # Save immediately
@@ -262,9 +273,47 @@ class MaterialDB:
         except Exception as e:
             print(f"Failed to save material: {e}")
             return False
+        
+    def update_material(self, old_symbol, new_symbol=None, name=None, density=None, formula=None, color=None):
+        """Update material, optionally renaming its symbol"""
+        if old_symbol not in self.materials:
+            return False
 
+        mat_data = self.materials.pop(old_symbol)  # Remove old entry
+
+        # Apply updates
+        if new_symbol:
+            old_symbol = new_symbol  # Use new symbol as key
+        if name:
+            mat_data["name"] = name
+        if density is not None:
+            mat_data["density_g_cm3"] = float(density)
+        if formula:
+            mat_data["formula"] = formula
+        if color:
+            mat_data["color"] = color
+
+        # Reinsert with (possibly new) symbol
+        self.materials[new_symbol or old_symbol] = mat_data
+
+        # Save to file
+        try:
+            with open(self.db_file, 'w') as f:
+                json.dump(self.materials, f, indent=2)
+            return True
+        except Exception as e:
+            print(f"Failed to save updated material: {e}")
+            return False
+        
     def list_materials(self):
-        return sorted(self.materials.keys())
+        """
+        Return only valid material symbols (exclude 'SOURCE', 'REFERENCES', etc.)
+        """
+        reserved_keys = {'SOURCE', 'REFERENCES', 'comments', 'version'}  # Add any meta keys used
+        return sorted([
+            key for key in self.materials.keys()
+            if isinstance(self.materials[key], dict) and key not in reserved_keys
+        ])
 
     def get(self, name):
         return self.materials.get(name)
@@ -275,8 +324,8 @@ class FiberSimulationUI(QMainWindow):
         super().__init__()
         self.setGeometry(700, 150, 1000, 1200)
         self.dose_data = None
+        self.selected_color = "#8d99ae"  # Default gray
         self.material_db = MaterialDB()
-        self.material_props = self.load_material_density()
         self.colorbar = None
         # ✅ Initialize cavity group as None
         self.cav_group = None
@@ -287,8 +336,10 @@ class FiberSimulationUI(QMainWindow):
         self.num_particles = None
         self.log = QTextEdit()
         self.log.setReadOnly(True)
+        self.material_props = self.load_material_properties()
         self.log.append("✅ Ready to simulate! Configure geometry and source.")
         self.init_ui()
+        self.connect_symbol_selection()
         
 
     def browse_folder(self):
@@ -349,7 +400,7 @@ class FiberSimulationUI(QMainWindow):
     
     def setup_analysis(self):
         """Call this after UI is fully initialized"""
-        self.material_props = self.load_material_density()
+        self.material_props = self.load_material_properties()
         if self.material_props is None:
             # Fallback defaults
             self.material_props = {
@@ -422,54 +473,53 @@ class FiberSimulationUI(QMainWindow):
         # =======================
         layout.addWidget(QLabel("<b>Radiation Source:</b>"))
 
-        # --- Radiation Source Configuration ---
+       # --- Radiation Source Group ---
         source_group = QGroupBox("Radiation Source")
         source_layout = QFormLayout()
 
-        # Particle Type
+        # === Option 1: Predefined Source ===
+        self.source_type_combo = QComboBox()
+        self.source_type_combo.addItems([
+            "Custom",
+            "Cs-137 (662 keV)",
+            "Co-60 (1.17 & 1.33 MeV)",
+            "Am-241 (59.5 keV)",
+            "Na-22 (511 keV + 1.27 MeV)",
+            "Thermal Neutron"
+        ])
+        self.source_type_combo.currentTextChanged.connect(self.on_source_type_changed)
+        source_layout.addRow("Source:", self.source_type_combo)
+
+        # === Option 2: Custom Particle & Energy (Hidden if using preset) ===
+        self.custom_particle_label = QLabel("Particle:")
         self.particle_combo = QComboBox()
         self.particle_combo.addItems(["gamma", "e-", "e+", "proton", "neutron"])
-        source_layout.addRow("Particle:", self.particle_combo)
+        self.particle_combo.setCurrentText("gamma")
+        source_layout.addRow(self.custom_particle_label, self.particle_combo)
 
-        self.num_particles = QLineEdit("50000")
-        source_layout.addRow("Number of Particles:", self.num_particles)
-
-        # Energy Mode
-        self.energy_mode = QComboBox()
-        self.energy_mode.addItems(["Monoenergetic", "Line Spectrum", "File Input"])
-        self.energy_mode.currentTextChanged.connect(self.on_energy_mode_change)
-        source_layout.addRow("Energy Mode:", self.energy_mode)
-
-        # Energy Input
-        self.energy_input = QLineEdit("0.662")  # Default in MeV
+        self.energy_input = QLineEdit("0.662")
         self.energy_unit = QLabel("MeV")
         energy_hbox = QHBoxLayout()
         energy_hbox.addWidget(self.energy_input)
         energy_hbox.addWidget(self.energy_unit)
-        source_layout.addRow("Energy:", energy_hbox)
+        # Add label and layout manually
+        self.energy_label = QLabel("Energy (MeV):")
+        source_layout.addRow(self.energy_label, energy_hbox)
 
-        # Optional: Secondary line (for Co-60)
+        # Optional: Second line for Co-60 / Na-22
         self.second_line_layout = QHBoxLayout()
         self.second_line_check = QCheckBox("Add Second Line")
         self.second_line_check.stateChanged.connect(self.toggle_second_line)
         self.second_line_val = QLineEdit("1.332")
         self.second_line_val.setEnabled(False)
         self.second_line_layout.addWidget(self.second_line_check)
-        self.second_line_layout.addWidget(QLabel("Energy (MeV):"))
         self.second_line_layout.addWidget(self.second_line_val)
+        self.second_line_layout.addWidget(QLabel("MeV"))
         source_layout.addRow("", self.second_line_layout)
 
-        # Or: Spectrum File
-        self.spectrum_file = QLineEdit()
-        self.spectrum_file.setPlaceholderText("Optionally load spectrum from CSV")
-        self.spectrum_browse = QPushButton("Browse")
-        self.spectrum_browse.clicked.connect(self.browse_spectrum_file)
-        spec_layout = QHBoxLayout()
-        spec_layout.addWidget(self.spectrum_file)
-        spec_layout.addWidget(self.spectrum_browse)
-        source_layout.addRow("Spectrum File:", spec_layout)
-        self.spectrum_browse.setVisible(False)
-        self.spectrum_file.setVisible(False)
+        # === Number of Particles ===
+        self.num_particles = QLineEdit("50000")
+        source_layout.addRow("Number of Particles:", self.num_particles)
 
         source_group.setLayout(source_layout)
         layout.addWidget(source_group)
@@ -485,13 +535,18 @@ class FiberSimulationUI(QMainWindow):
 
         layout.addLayout(source_layout)
 
-        # --- Add Custom Material Section ---
-        mat_group = QGroupBox("Add Custom Material")
+       # - Add/Edit Custom Material Section -
+        mat_group = QGroupBox("Add or Update Custom Material")
         mat_layout = QFormLayout()
 
-        self.new_mat_symbol = QLineEdit()
-        self.new_mat_symbol.setPlaceholderText("e.g., Y2O3")
-        mat_layout.addRow("Chemical Symbol:", self.new_mat_symbol)
+        # Symbol Combo Box (Editable) — Now both selectable AND editable
+        self.new_mat_symbol_combo = QComboBox()
+        self.new_mat_symbol_combo.setEditable(True)
+        self.new_mat_symbol_combo.setPlaceholderText("e.g., Y2O3")
+
+        # Populate with current materials
+        self.refresh_symbol_combobox()  # Defined below
+        mat_layout.addRow("Chemical Symbol:", self.new_mat_symbol_combo)
 
         self.new_mat_name = QLineEdit()
         self.new_mat_name.setPlaceholderText("e.g., Yttrium Oxide")
@@ -501,9 +556,25 @@ class FiberSimulationUI(QMainWindow):
         self.new_mat_density.setPlaceholderText("Density (g/cm³)")
         mat_layout.addRow("Density:", self.new_mat_density)
 
+        # Color Picker Row
+        color_row = QHBoxLayout()
+        self.new_mat_color_label = QLabel("🎨")
+        self.new_mat_color_label.setFixedWidth(20)
+        btn_pick_color = QPushButton("Choose Color")
+        btn_pick_color.clicked.connect(self.pick_material_color)
+        color_row.addWidget(self.new_mat_color_label)
+        color_row.addWidget(btn_pick_color)
+        mat_layout.addRow("Color:", color_row)
+
+        # Buttons: Add & Update
+        button_row = QHBoxLayout()
         btn_add_mat = QPushButton("➕ Add Material")
         btn_add_mat.clicked.connect(self.add_custom_material)
-        mat_layout.addWidget(btn_add_mat)
+        btn_update_mat = QPushButton("🔄 Update Material")
+        btn_update_mat.clicked.connect(self.update_custom_material)
+        button_row.addWidget(btn_add_mat)
+        button_row.addWidget(btn_update_mat)
+        mat_layout.addRow(button_row)
 
         mat_group.setLayout(mat_layout)
         layout.addWidget(mat_group)
@@ -559,7 +630,7 @@ class FiberSimulationUI(QMainWindow):
         preview_group = QGroupBox("Sensor Structure Preview")
         if not hasattr(self, 'preview_layout'):
             preview_layout = QVBoxLayout()
-            self.preview_canvas = MplCanvas(self, width=8, height=1.5, dpi=100)  # Smaller height
+            self.preview_canvas = MplCanvas(self, width=8, height=2.0, dpi=100)  # Smaller height
             preview_layout.addWidget(self.preview_canvas)
             preview_group.setLayout(preview_layout)
 
@@ -573,17 +644,17 @@ class FiberSimulationUI(QMainWindow):
         # --- Results Chart (Bottom 3/4) ---
         self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
         chart_group = QGroupBox("Dose Distribution")
-        chart_layout = QVBoxLayout()
-        chart_layout.addWidget(self.canvas)
-        chart_group.setLayout(chart_layout)
+        self.chart_layout = QVBoxLayout()
+        self.chart_layout.addWidget(self.canvas)
+        chart_group.setLayout(self.chart_layout)
 
-        chart_widget = QWidget()
-        chart_widget.setLayout(QVBoxLayout())
-        chart_widget.layout().addWidget(chart_group)
+        self.chart_widget = QWidget()
+        self.chart_widget.setLayout(QVBoxLayout())
+        self.chart_widget.layout().addWidget(chart_group)
 
         # Add to splitter
         splitter.addWidget(preview_widget)
-        splitter.addWidget(chart_widget)
+        splitter.addWidget(self.chart_widget)
         splitter.setSizes([int(self.height() * 0.25), int(self.height() * 0.75)])  # 1:3 ratio
 
         layout.addWidget(splitter)
@@ -609,6 +680,89 @@ class FiberSimulationUI(QMainWindow):
         layout.addLayout(btn_layout)
         widget.setLayout(layout)
         return widget
+    
+    def pick_material_color(self):
+        color = QColorDialog.getColor()
+        if color.isValid():
+            hex_color = color.name()  # e.g., "#e63946"
+            self.new_mat_color_label.setStyleSheet(f"background-color: {hex_color}; border: 1px solid black; border-radius: 10px;")
+            self.new_mat_color_label.setToolTip(f"Selected color: {hex_color}")
+            # Store in object
+            self.selected_color = hex_color
+        else:
+            self.selected_color = None
+
+    def on_source_type_changed(self, text):
+        """Update visibility based on selected source"""
+        if text == "Custom":
+            # Show custom fields
+            self.custom_particle_label.show()
+            self.particle_combo.show()
+            self.energy_label.show()
+            self.energy_input.show()
+            self.energy_unit.show()
+            self.second_line_check.show()
+        else:
+            # Hide all custom fields
+            self.custom_particle_label.hide()
+            self.particle_combo.hide()
+            self.energy_label.hide()
+            self.energy_input.hide()
+            self.energy_unit.hide()
+            self.second_line_check.hide()
+            self.second_line_val.hide() if hasattr(self, 'second_line_val') else None
+
+    def toggle_second_line(self):
+        state = self.second_line_check.isChecked()
+        self.second_line_val.setEnabled(state)
+
+    def refresh_symbol_combobox(self):
+        """Reload symbol combo box with all current material symbols"""
+        self.new_mat_symbol_combo.clear()
+        symbols = sorted(self.material_db.list_materials())
+        self.new_mat_symbol_combo.addItems(symbols)
+
+    def clear_plot(self):
+        """
+        Completely clears the dose plot area and creates a fresh MplCanvas
+        to prevent shrinking or overlapping on subsequent runs.
+        """
+        try:
+            # Safely remove old canvas
+            if hasattr(self, 'canvas') and self.canvas is not None:
+                # Clear colorbar if exists
+                if hasattr(self, 'colorbar') and self.colorbar is not None:
+                    try:
+                        self.colorbar.ax.clear()
+                        self.colorbar.ax.figure.delaxes(self.colorbar.ax)
+                        self.colorbar = None
+                    except Exception as e:
+                        print(f"Colorbar cleanup warning: {e}")
+
+                # Clear the axes
+                if hasattr(self.canvas, 'ax'):
+                    self.canvas.ax.clear()
+
+                # Remove from layout
+                self.chart_layout.removeWidget(self.canvas)
+                self.canvas.deleteLater()
+                self.canvas = None
+
+            # Create new canvas
+            self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
+            
+            # Add back to layout (assumes you have a layout named 'plot_layout')
+            self.chart_layout.addWidget(self.canvas)
+
+            # Optional: Reset data
+            self.dose_data = None
+
+            self.log.append("✅ Plot area reset for new simulation.")
+
+        except Exception as e:
+            self.log.append(f"⚠️ Failed to clear plot: {str(e)}")
+            import traceback
+            self.log.append(traceback.format_exc())
 
     ############### Layer Table Management ################
     def on_sensor_type_changed(self):
@@ -620,16 +774,37 @@ class FiberSimulationUI(QMainWindow):
             self.load_end_face_layers()
         self.update_preview()
 
+    def connect_symbol_selection(self):
+        """Call this after creating new_mat_symbol_combo"""
+        self.new_mat_symbol_combo.currentTextChanged.connect(self.load_material_for_editing)
+
+    def load_material_for_editing(self, symbol):
+        """Auto-fill fields when a symbol is selected"""
+        if not symbol or symbol not in self.material_props:
+            return
+
+        mat = self.material_props[symbol]
+        self.new_mat_name.setText(mat.get("name", ""))
+        self.new_mat_density.setText(str(mat.get("density_g_cm3", "")))
+
+        # Set color preview
+        color_hex = mat.get("color", "#8d99ae")
+        self.selected_color = color_hex
+        self.new_mat_color_label.setStyleSheet(f"background-color: {color_hex}; border: 1px solid black; border-radius: 10px;")
+        self.new_mat_color_label.setToolTip(f"Current color: {color_hex}")
+        
     def add_layer_row(self, name="", mat="", layer_type="Cylindrical", ir="", orad="", length="5.0"):
         try:
             row = self.layer_table.rowCount()
             self.layer_table.insertRow(row)
 
-            # Name
-            name_widget = QLineEdit(str(name))
+            # === Column 0: Name (QLineEdit) ===
+            name_str = str(name) if name is not None and str(name).strip() != "None" else ""
+            name_widget = QLineEdit(name_str)
+            name_widget.editingFinished.connect(self.update_preview)
             self.layer_table.setCellWidget(row, 0, name_widget)
 
-            # Material
+            # === Column 1: Material (QComboBox) ===
             if not hasattr(self, 'material_db'):
                 raise AttributeError("material_db not initialized")
 
@@ -639,31 +814,63 @@ class FiberSimulationUI(QMainWindow):
             idx = mat_combo.findText(str(mat))
             if idx >= 0:
                 mat_combo.setCurrentIndex(idx)
+            else:
+                mat_combo.setCurrentIndex(0)  # Fallback to first material
+
+            # ✅ Dynamic name sync: TiO2 → TiO2_Coating when coating
+            def sync_name():
+                current_name = name_widget.text().strip()
+                selected_mat = mat_combo.currentText().strip()
+                # Only auto-rename if it's a coating-type layer
+                if "Coating" in current_name or any(kw in current_name.upper() for kw in ["TI_OXIDE", "GADOLINIA"]):
+                    base = selected_mat.split("_")[0]  # e.g., "TiO2"
+                    new_name = f"{base}_Coating"
+                    name_widget.setText(new_name)
+                self.update_preview()
+
+            mat_combo.currentTextChanged.connect(sync_name)
+            mat_combo.currentTextChanged.connect(lambda: self.on_type_change(row))
             self.layer_table.setCellWidget(row, 1, mat_combo)
 
-            # Type
+            # === Column 2: Type (QComboBox) ===
             type_combo = QComboBox()
-            type_combo.addItems(["Solid Cylinder", "Hollow Cylinder", "End-Face Disk", "Microcavity Spacer", "Tapered Section"])
+            type_combo.addItems([
+                "Solid Cylinder", 
+                "Hollow Cylinder", 
+                "End-Face Disk", 
+                "Microcavity Spacer", 
+                "Tapered Section"
+            ])
             t_idx = type_combo.findText(str(layer_type))
             if t_idx >= 0:
                 type_combo.setCurrentIndex(t_idx)
             else:
                 type_combo.setCurrentText("Hollow Cylinder")
             type_combo.currentTextChanged.connect(lambda: self.on_type_change(row))
+            type_combo.currentTextChanged.connect(self.update_preview)
             self.layer_table.setCellWidget(row, 2, type_combo)
 
-            # Inner R
-            ir_widget = QLineEdit(str(ir))
+            # === Column 3: Inner Radius ===
+            ir_str = str(ir) if ir not in [None, "None"] else "0.0"
+            ir_widget = QLineEdit(ir_str)
+            ir_widget.editingFinished.connect(self.update_preview)
             self.layer_table.setCellWidget(row, 3, ir_widget)
 
-            # Outer R
-            orad_widget = QLineEdit(str(orad))
+            # === Column 4: Outer Radius ===
+            orad_str = str(orad) if orad not in [None, "None"] else "75.0"
+            orad_widget = QLineEdit(orad_str)
+            orad_widget.editingFinished.connect(self.update_preview)
             self.layer_table.setCellWidget(row, 4, orad_widget)
 
-            # Length
-            len_widget = QLineEdit(str(length))
+            # === Column 5: Length / Thickness ===
+            len_str = str(length) if length not in [None, "None"] else "5.0"
+            len_widget = QLineEdit(len_str)
+            len_widget.editingFinished.connect(self.update_preview)
             self.layer_table.setCellWidget(row, 5, len_widget)
+
+            # ✅ Force preview update after adding
             self.update_preview()
+
         except Exception as e:
             import traceback
             print("❌ CRASH in add_layer_row():", str(e))
@@ -717,8 +924,7 @@ class FiberSimulationUI(QMainWindow):
 
         ir_widget.setToolTip(
             "For Solid Cylinder: fixed at 0\n"
-            "For Hollow Cylinder / End-Face Disk: inner boundary radius (μm)"
-)
+            "For Hollow Cylinder / End-Face Disk: inner boundary radius (μm)")
         self.update_preview()
 
     def load_end_face_layers(self):
@@ -787,6 +993,12 @@ class FiberSimulationUI(QMainWindow):
     def clear_layers(self):
         self.layer_table.setRowCount(0)
         self.update_preview()
+    
+    def refresh_symbol_combobox(self):
+        """Reload symbol combo box with all current material symbols"""
+        self.new_mat_symbol_combo.clear()
+        symbols = sorted(self.material_db.list_materials())
+        self.new_mat_symbol_combo.addItems(symbols)
 
     def default_layers(self):
         """Set up default layer stack based on selected sensor type"""
@@ -821,52 +1033,57 @@ class FiberSimulationUI(QMainWindow):
         for i in range(self.layer_table.rowCount()):
             try:
                 w = lambda j: self.layer_table.cellWidget(i, j)
-                name = str(w(0).text()).strip()
-                mat_name = str(w(1).currentText()).strip()
-                layer_type = str(w(2).currentText()).strip() if w(2) else "Hollow Cylinder"
-                ir = float(w(3).text())
-                orad = float(w(4).text())
-                L = float(w(5).text())
+                
+                # Safely get text from QLineEdit or QComboBox
+                name_widget = w(0)
+                name = str(name_widget.text()).strip() if name_widget else ""
+
+                mat_combo = w(1)
+                mat_name = str(mat_combo.currentText()).strip() if mat_combo else "Unknown"
+
+                type_combo = w(2)
+                layer_type = str(type_combo.currentText()).strip() if type_combo else "Hollow Cylinder"
+
+                ir_widget = w(3)
+                ir = float(ir_widget.text()) if ir_widget and ir_widget.text().strip() else 0.0
+
+                orad_widget = w(4)
+                orad = float(orad_widget.text()) if orad_widget and orad_widget.text().strip() else 75.0
+
+                len_widget = w(5)
+                L = float(len_widget.text()) if len_widget and len_widget.text().strip() else 5.0
 
                 layers.append((name, mat_name, layer_type, ir, orad, L))
             except Exception as e:
-                continue
+                continue  # Skip malformed rows
 
         if not layers:
             ax.text(0.5, 0.5, "No layers defined", ha='center', va='center', transform=ax.transAxes, fontsize=10, color='gray')
             ax.axis('off')
         else:
-            # Color mapping by material
-            color_map = {
-                'TiO2': '#e63946',
-                'Gd2O3': '#c11a2b',
-                'G4_SILICON_DIOXIDE': '#457b9d',
-                'SiO2': '#457b9d',
-                'AIR': '#ffffff',
-                'G4_AIR': '#ffffff',
-                'Spacer': '#f4a261'
-            }
-
             sensor_type = self.sensor_type.currentText() if hasattr(self, 'sensor_type') else "End-Face Coated FPI"
             max_radius = max(layer[4] for layer in layers) * 1.2
-
-            # === Step 1: Draw coaxial core and cladding over same 5 mm ===
-            z_start = 0.0
             total_length = max(layer[5] for layer in layers)
 
-            for name, mat_name, layer_type, ir, orad, L in layers:
-                if "Coating" in name or "Cavity" in name:
-                    continue
+            z_start = 0.0
+            current_z = z_start
 
-                color = color_map.get(mat_name, '#8d99ae')
+            # === Step 1: Draw Core & Cladding (Coaxial, Full Length) ===
+            core_cladding_layers = [l for l in layers if "Coating" not in l[0] and "Cavity" not in l[0]]
+            cavity_layer = next((l for l in layers if "Cavity" in l[0] or l[1] == "G4_AIR"), None)
 
-                rect = plt.Rectangle((z_start, -orad), total_length, 2*orad,
-                                facecolor=color, edgecolor='black', linewidth=0.8, alpha=0.8)
+            for name, mat_name, layer_type, ir, orad, L in core_cladding_layers:
+                # Get color from material database
+                mat_data = self.material_props.get(mat_name, {})
+                color = mat_data.get('color', '#8d99ae')  # Default gray if missing
+
+                rect = plt.Rectangle((current_z, -orad), total_length, 2*orad,
+                                    facecolor=color, edgecolor='black', linewidth=0.8, alpha=0.8)
                 ax.add_patch(rect)
 
-                if layer_type == "Hollow Cylinder":
-                    hole = plt.Rectangle((z_start, -ir), total_length, 2*ir,
-                                    facecolor='white', edgecolor='none')
+                if layer_type == "Hollow Cylinder" and ir > 0:
+                    hole = plt.Rectangle((current_z, -ir), total_length, 2*ir,
+                                        facecolor='white', edgecolor='none')
                     ax.add_patch(hole)
                     label_y = (ir + orad) / 2
                     text_color = 'white'
@@ -874,68 +1091,74 @@ class FiberSimulationUI(QMainWindow):
                     label_y = orad + 2
                     text_color = 'black'
 
-                ax.text(z_start + total_length/2, label_y, name,
+                ax.text(current_z + total_length/2, label_y, name,
                         fontsize=7, ha='center', va='bottom', color=text_color, weight='bold')
 
-            # === Step 2: Draw microcavity (if present) ===
-            cavity_end = total_length  # ✅ Default fallback value
-            if sensor_type == "In-Fiber Microcavity":
-                cavity_layer = None
-                for name, mat_name, layer_type, ir, orad, L in layers:
-                    if "Cavity" in name or mat_name == "G4_AIR":
-                        cavity_layer = (name, ir, orad, L)
-                        break
+            # === Step 2: Draw Microcavity (Transverse Cut) ===
+            cavity_end = total_length
+            if sensor_type == "In-Fiber Microcavity" and cavity_layer is not None:
+                name, mat_name, layer_type, cav_ir, cav_or, cav_len = cavity_layer
+                try:
+                    cav_zpos_mm = float(self.cav_zpos.text()) / 1000.0
+                except:
+                    cav_zpos_mm = -2.0  # Default
 
-                if cavity_layer is not None:
-                    name, cav_inner_r, cav_outer_r, cav_axial_len = cavity_layer
+                mid_z = total_length / 2.0
+                cavity_center_z = mid_z + cav_zpos_mm
+                cavity_start = cavity_center_z - cav_len / 2.0
+                cavity_end = cavity_center_z + cav_len / 2.0
 
-                    try:
-                        cav_zpos_um = float(self.cav_zpos.text())
-                    except:
-                        cav_zpos_um = -2000.0
-                    cav_zpos_mm = cav_zpos_um / 1000.0
+                cut_depth_fraction = 0.5
+                effective_outer_r = cav_ir + (cav_or - cav_ir) * cut_depth_fraction
 
-                    mid_z = total_length / 2.0
-                    cavity_center_z = mid_z + cav_zpos_mm
-                    cavity_start = cavity_center_z - cav_axial_len / 2.0
-                    cavity_end = cavity_center_z + cav_axial_len / 2.0  # ✅ Now safely assigned
+                outer_rect = plt.Rectangle(
+                    (cavity_start, -effective_outer_r), cav_len, 2*effective_outer_r,
+                    facecolor='white', edgecolor='red', linewidth=1.5, hatch='///', alpha=0.6
+                )
+                inner_rect = plt.Rectangle(
+                    (cavity_start, -cav_ir), cav_len, 2*cav_ir,
+                    facecolor='white', edgecolor='none'
+                )
 
-                    # Partial radial cut (only halfway into cladding)
-                    cut_depth_fraction = 0.5
-                    effective_outer_r = cav_inner_r + (cav_outer_r - cav_inner_r) * cut_depth_fraction
+                ax.add_patch(outer_rect)
+                ax.add_patch(inner_rect)
+                ax.text(cavity_center_z, effective_outer_r + 2, "Microcavity",
+                        fontsize=7, ha='center', va='bottom', color='red', weight='bold', style='italic')
 
-                    outer_rect = plt.Rectangle(
-                        (cavity_start, -effective_outer_r), cav_axial_len, 2*effective_outer_r,
-                        facecolor='white', edgecolor='red', linewidth=1.5, hatch='///', alpha=0.6
-                    )
-                    inner_rect = plt.Rectangle(
-                        (cavity_start, -cav_inner_r), cav_axial_len, 2*cav_inner_r,
-                        facecolor='white', edgecolor='none'
-                    )
+            # === Step 3: Draw Coatings at Tip (Visually Exaggerated) ===
+            coating_base_z = total_length
+            display_gap = 0.001  # Small gap between coatings
+            label_offset_y = []  # Track vertical positions to avoid overlap
 
-                    ax.add_patch(outer_rect)
-                    ax.add_patch(inner_rect)
-                    ax.text(cavity_center_z, effective_outer_r + 2, "Microcavity",
-                            fontsize=7, ha='center', va='bottom', color='red', weight='bold', style='italic')
-
-            # === Step 3: Draw coatings at tip (exaggerated visually) ===
-            coating_z = total_length
             for name, mat_name, layer_type, ir, orad, L in layers:
-                if "Coating" in name or "coating" in name:
-                    real_thickness = L
-                    display_thickness = max(real_thickness * 50, 0.05)
-                    color = color_map.get(mat_name, '#8d99ae')
-                    disk_orad = max_radius * 1.05
+                if "Coating" not in name and "coating" not in name:
+                    continue
 
-                    rect = plt.Rectangle((coating_z, -disk_orad), display_thickness, 2*disk_orad,
+                real_thickness = L
+                display_thickness = max(real_thickness * 50, 0.05)  # Visually thickened
+                mat_data = self.material_props.get(mat_name, {})
+                color = mat_data.get('color', '#8d99ae')  # Default gray if missing
+                disk_orad = max_radius * 1.05
+
+                rect = plt.Rectangle((coating_base_z, -disk_orad), display_thickness, 2*disk_orad,
                                     facecolor=color, edgecolor='black', linewidth=0.8, alpha=0.8)
-                    ax.add_patch(rect)
-                    ax.text(coating_z + display_thickness/2, disk_orad + 2, name,
-                            fontsize=7, ha='center', va='bottom', color='black', weight='bold')
-                    coating_z += display_thickness
+                ax.add_patch(rect)
 
-            # ✅ Safe to use cavity_end here — always defined
-            final_length = max(coating_z, cavity_end) * 1.1 if sensor_type == "In-Fiber Microcavity" else coating_z * 1.1
+                # Stagger labels vertically to prevent overlap
+                candidate_y = disk_orad + 3
+                while any(abs(candidate_y - y) < 15 for y in label_offset_y):
+                    candidate_y += 8  # Move up until clear
+                label_offset_y.append(candidate_y)
+
+                # Add label with background box for readability
+                ax.text(coating_base_z + display_thickness/2, candidate_y, name,
+                        fontsize=7, ha='center', va='bottom', color='black', weight='bold',
+                        bbox=dict(boxstyle="round,pad=0.2", facecolor='white', edgecolor='gray', alpha=0.9))
+
+                coating_base_z += display_thickness + display_gap
+
+            # === Final Layout ===
+            final_length = max(coating_base_z, cavity_end) * 1.1 if sensor_type == "In-Fiber Microcavity" else coating_base_z * 1.1
             ax.set_xlim(0, final_length)
             ax.set_ylim(-max_radius, max_radius)
             ax.set_xlabel("Axial Position Z (mm)")
@@ -1045,22 +1268,58 @@ class FiberSimulationUI(QMainWindow):
                 particle = "gamma"
                 energy = "0.662 MeV"
 
-                if hasattr(self, 'particle_combo'):
-                    particle = self.particle_combo.currentText().lower()
+                f.write("/run/initialize\n")
 
-                if hasattr(self, 'energy_input'):
+                # Determine source
+                source = self.source_type_combo.currentText()
+
+                if source == "Custom":
+                    particle = self.particle_combo.currentText()
                     try:
-                        energy_val = float(self.energy_input.text())
-                        energy = f"{energy_val:.6f} MeV"
+                        energy = float(self.energy_input.text())
+                        f.write(f"/gps/particle {particle}\n")
+                        f.write(f"/gps/energy {energy} MeV\n")
+                        
+                        if self.second_line_check.isChecked():
+                            try:
+                                second_energy = float(self.second_line_val.text())
+                                f.write(f"/gps/hist/point {second_energy} MeV\n")
+                                f.write(f"/gps/hist/weight 1.0\n")  # Equal probability
+                            except:
+                                pass
                     except:
-                        pass
+                        f.write("/gps/particle gamma\n/gps/energy 0.662 MeV\n")
 
+                elif "Cs-137" in source:
+                    f.write("/gps/particle gamma\n")
+                    f.write("/gps/energy 0.662 MeV\n")
+
+                elif "Co-60" in source:
+                    f.write("/gps/particle gamma\n")
+                    f.write("/gps/energy 1.17 MeV\n")
+                   # f.write("/gps/hist/point 1.33 MeV\n")
+                   # f.write("/gps/hist/weight 1.0\n")
+
+                elif "Am-241" in source:
+                    f.write("/gps/particle gamma\n")
+                    f.write("/gps/energy 0.0595 MeV\n")
+
+                elif "Na-22" in source:
+                    f.write("/gps/particle gamma\n")
+                    f.write("/gps/energy 0.511 MeV\n")
+                    #f.write("/gps/hist/point 1.27 MeV\n")
+                    #f.write("/gps/hist/weight 1.0\n")
+
+                elif "Thermal Neutron" in source:
+                    f.write("/gps/particle neutron\n")
+                    f.write("/gps/energy 0.025 eV\n")  # Thermal energy
+                            
                 # === Source Setup Based on Sensor Type ===
                 if sensor_type == "In-Fiber Microcavity":
                     f.write("# Source Setup: Transverse Illumination for Microcavity\n")
                     f.write("/gps/pos/type Plane\n")
                     f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 82.5 um\n")           # Cover radial extent
+                    f.write("/gps/pos/radius 75.05 um\n")           # Cover radial extent
                     f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
                 #   Emit backward along +Z axis (into fiber)
                     f.write("/gps/ang/type iso\n")
@@ -1068,24 +1327,20 @@ class FiberSimulationUI(QMainWindow):
                     f.write("/gps/ang/maxtheta 0 deg\n")   # Directly backward    # Focused cone      # Small forward cone
                     # Wide cone
                     f.write("/gps/ene/type Mono\n")
-                    f.write(f"/gps/particle {particle}\n")
-                    f.write(f"/gps/energy {energy}\n\n")
 
                 else:
                     # Standard End-Face Coated FPI
                     f.write("# Source Setup: End-Face Illumination\n")
                     f.write("/gps/pos/type Plane\n")
                     f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 82.05 um\n")         # Slightly larger than coating
+                    f.write("/gps/pos/radius 75.05 um\n")         # Slightly larger than coating
                     f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
                     # Emit backward along +Z axis (into fiber)
                     f.write("/gps/ang/type iso\n")
                     # f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
                     f.write("/gps/ang/maxtheta  0 deg\n")   # Directly backward
                     f.write("/gps/ene/type Mono\n")
-                    f.write(f"/gps/particle {particle}\n")
-                    f.write(f"/gps/energy {energy}\n\n")
-
+                
                 # Run Settings
                 n_events = 1000
                 if hasattr(self, 'num_particles'):
@@ -1217,34 +1472,94 @@ class FiberSimulationUI(QMainWindow):
             self.log.append(f"📁 Selected spectrum file: {os.path.basename(filename)}")
 
     def add_custom_material(self):
-            symbol = self.new_mat_symbol.text().strip()
-            name = self.new_mat_name.text().strip()
-            density_str = self.new_mat_density.text().strip()
+        symbol = self.new_mat_symbol.text().strip()
+        name = self.new_mat_name.text().strip()
+        density_str = self.new_mat_density.text().strip()
 
-            if not all([symbol, name, density_str]):
-                QMessageBox.warning(self, "Input Error", "All fields are required.")
-                return
+        if not all([symbol, name, density_str]):
+            QMessageBox.warning(self, "Input Error", "All fields are required.")
+            return
 
-            try:
-                density = float(density_str)
-                if density <= 0:
-                    raise ValueError
-            except:
-                QMessageBox.warning(self, "Input Error", "Density must be a positive number.")
-                return
+        try:
+            density = float(density_str)
+            if density <= 0: raise ValueError
+        except:
+            QMessageBox.warning(self, "Input Error", "Density must be a positive number.")
+            return
 
-            # Add to DB
-            success = self.material_db.add_material(symbol, name, density)
-            if success:
-                self.log.append(f"✅ Added material: {symbol} ({name}, {density} g/cm³)")
-                # Refresh all combo boxes
-                self.refresh_material_combos()
-                self.new_mat_symbol.clear()
-                self.new_mat_name.clear()
-                self.new_mat_density.clear()
-            else:
-                QMessageBox.critical(self, "Save Failed", "Could not save material to database.")
+        # Use selected color, fallback if not picked
+        color = getattr(self, 'selected_color', '#8d99ae')
 
+        # Add to DB
+        success = self.material_db.add_material(symbol, name, density, color=color)
+        if success:
+            self.log.append(f"✅ Added material: {symbol} ({name}, {density} g/cm³)")
+            self.refresh_material_combos()
+            # Clear inputs
+            self.new_mat_symbol.clear()
+            self.new_mat_name.clear()
+            self.new_mat_density.clear()
+            self.new_mat_color_label.setStyleSheet("")
+            self.new_mat_color_label.setToolTip("")
+            self.selected_color = '#8d99ae'
+        else:
+            QMessageBox.critical(self, "Save Failed", "Could not save material to database.")
+    
+    def update_custom_material(self):
+        old_symbol = self.new_mat_symbol_combo.currentText().strip()
+        new_symbol = self.new_mat_symbol_combo.currentText().strip()  # Can be changed
+        name = self.new_mat_name.text().strip()
+        density_str = self.new_mat_density.text().strip()
+        color = getattr(self, 'selected_color', None)
+
+        if not old_symbol:
+            QMessageBox.warning(self, "Input Error", "Select a material to update.")
+            return
+        if not all([new_symbol, name, density_str]):
+            QMessageBox.warning(self, "Input Error", "Symbol, name, and density are required.")
+            return
+
+        try:
+            density = float(density_str)
+            if density <= 0: raise ValueError
+        except:
+            QMessageBox.warning(self, "Input Error", "Density must be a positive number.")
+            return
+
+        if old_symbol not in self.material_db.list_materials():
+            QMessageBox.warning(self, "Not Found", f"No material found with symbol '{old_symbol}'.")
+            return
+
+        # Perform update (including symbol rename)
+        success = self.material_db.update_material(
+            old_symbol,
+            new_symbol=new_symbol,
+            name=name,
+            density=density,
+            color=color
+        )
+
+        if success:
+            self.log.append(f"🔄 Updated material: {old_symbol} → {new_symbol}")
+            self.refresh_symbol_combobox()
+            self.refresh_material_combos()
+            self.update_preview()
+            # Clear fields?
+            # self.new_mat_name.clear(); self.new_mat_density.clear()
+        else:
+            QMessageBox.critical(self, "Update Failed", "Could not save changes.")
+
+    def load_material_properties(self):
+        materials_file = os.path.join(os.path.dirname(__file__), "materials.json")
+        try:
+            with open(materials_file, 'r') as f:
+                raw = json.load(f)
+            reserved = {'SOURCE', 'REFERENCES'}
+            return {k: v for k, v in raw.items() if isinstance(v, dict) and k not in reserved}
+        except Exception as e:
+            self.log.append(f"💥 Failed to load materials.json: {str(e)}")
+            return {}
+        
     def refresh_material_combos(self):
         """
         Refresh all material combo boxes in the layer table and source settings.
@@ -1374,6 +1689,8 @@ class FiberSimulationUI(QMainWindow):
 
     def run_simulation(self):
         """Start the simulation after generating config files"""
+        # === Reset plot area ===
+        self.clear_plot()  # ← Clean before every run
         if hasattr(self, 'worker') and self.worker.isRunning():
             self.log.append("⚠️ Waiting for previous simulation to stop...")
             self.worker.stop()
@@ -1695,7 +2012,7 @@ class FiberSimulationUI(QMainWindow):
 
         ax.set_xlabel("Radial Position (μm)")
         ax.set_ylabel("Axial Position Z (μm)")
-        ax.set_title("Energy Deposits in Fiber Sensor")
+        ax.set_title("Energy Deposits in Coated FPI Sensor")
 
         # Adjust axis limits based on actual data
         r_min, r_max = r[mask].min(), r[mask].max()
@@ -1722,46 +2039,33 @@ class FiberSimulationUI(QMainWindow):
 
         # === Step6: Redraw ===
         self.canvas.draw()
+        self.canvas.figure.savefig("fig1_energy_deposit.pdf", dpi=300)
         self.log.append(f"✅ Plotted {mask.sum()} energy deposits.")
+        # In plot_dose() or analyze_dose()
+        df = self.dose_data.copy()
+
+        # Assume you have direction info (or approximate from position)
+        # For now, use radial spread as proxy
+        r_start = np.sqrt(df['X']**2 + df['Y']**2)
+        z_start = df['Z']
+
+        # Approximate tanθ ≈ r / z_offset
+        theta_deg = np.arctan2(r_start, 0.1) * 180 / np.pi  # Assume source at -0.1 mm
+
+        # Bin by angle
+        bins = [0, 5, 10, 15, 20, 90]
+        labels = ['0–5°', '5–10°', '10–15°', '15–20°', '>20°']
+        df['AngleBin'] = pd.cut(theta_deg, bins=bins, labels=labels, include_lowest=True)
+
+        # Count interactions per bin
+        interaction_count = df.groupby('AngleBin').size()
+        energy_deposited = df.groupby('AngleBin')['Edep_keV'].sum()
+
+        print("Interactions by Angle:")
+        print(interaction_count)
+        print("\nTotal Energy Deposit by Angle:")
+        print(energy_deposited)
     
-    def load_material_density(self):
-        """Load material properties from materials.json"""
-        materials_file = os.path.join(os.path.dirname(__file__), "materials.json")
-        
-        try:
-            if not os.path.exists(materials_file):
-                if hasattr(self, 'log'):
-                    self.log.append("⚠️ materials.json not found.")
-                return None
-
-            with open(materials_file, 'r') as f:
-                data = json.load(f)
-
-            density_map = {}
-            specific_heat_map = {}
-            dn_dt_map = {}
-            for name, props in data.items():
-                if not isinstance(props, dict):
-                    continue  # Skip strings or other invalid types
-                density_map[name] = props.get('density_g_cm3', 2.20)
-                specific_heat_map[name] = props.get('specific_heat_J_per_kg_K', 700)
-                dn_dt_map[name] = props.get('dn_dT_per_K', 1.2e-5)
-
-            if hasattr(self, 'log'):
-                self.log.append(f"✅ Loaded {len(density_map)} material properties from materials.json")
-
-            return {
-                'density': density_map,
-                'specific_heat': specific_heat_map,
-                'dn_dT_per_K': dn_dt_map
-            }
-
-        except Exception as e:
-            if hasattr(self, 'log'):
-                self.log.append(f"💥 Failed to load materials.json: {str(e)}. Using defaults.")
-            traceback.print_exc()
-            return None
-        
     ############### Dose Analysis ################
     def analyze_dose(self):
         try:

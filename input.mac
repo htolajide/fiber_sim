@@ -1,15 +1,15 @@
 # Geant4 Macro File - Auto-generated
 # End-Face Coated FPI Source Configuration
 
+/run/initialize
+/gps/particle gamma
+/gps/energy 1.17 MeV
 # Source Setup: End-Face Illumination
 /gps/pos/type Plane
 /gps/pos/shape Circle
-/gps/pos/radius 82.05 um
+/gps/pos/radius 75.05 um
 /gps/pos/centre 0 0 -0.1 mm
 /gps/ang/type iso
 /gps/ang/maxtheta  0 deg
 /gps/ene/type Mono
-/gps/particle gamma
-/gps/energy 0.662000 MeV
-
 /run/beamOn 50000
