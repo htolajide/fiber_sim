@@ -1,37 +1,35 @@
 {
-    "SOURCE": "Material properties sourced from CRC Handbook, NIST, manufacturer datasheets, and literature.",
-    "REFERENCES": [
-      "CRC Handbook of Chemistry and Physics, 104th Ed.",
-      "NIST Standard Reference Database 126",
-      "Malitson, I.H. (1965). JOSA 55(10), 1205–1209 (SiO₂)",
-      "Bachmann et al., Appl. Opt. 34(27), 6341–6348 (TiO₂)",
-      "Kato et al., J. Am. Ceram. Soc. 79(1), 149–154 (Gd₂O₃)",
-      "Snead et al., J. Nucl. Mater. 377(3), 487–494 (HfO₂)"
-    ],
-    "G4_AIR": {
+  "SOURCE": "Material properties sourced from CRC Handbook, NIST, manufacturer datasheets, and literature.",
+  "REFERENCES": [
+    "CRC Handbook of Chemistry and Physics, 104th Ed.",
+    "NIST Standard Reference Database 126",
+    "Malitson, I.H. (1965). JOSA 55(10), 1205\u00e2\u20ac\u201c1209 (SiO\u00e2\u201a\u201a)",
+    "Bachmann et al., Appl. Opt. 34(27), 6341\u00e2\u20ac\u201c6348 (TiO\u00e2\u201a\u201a)",
+    "Kato et al., J. Am. Ceram. Soc. 79(1), 149\u00e2\u20ac\u201c154 (Gd\u00e2\u201a\u201aO\u00e2\u201a\u0192)",
+    "Snead et al., J. Nucl. Mater. 377(3), 487\u00e2\u20ac\u201c494 (HfO\u00e2\u201a\u201a)"
+  ],
+  "G4_AIR": {
     "name": "Air",
     "formula": "N2/O2",
     "category": "Gas",
     "density_g_cm3": 0.001205,
     "specific_heat_J_per_kg_K": 1005,
-    "dn_dT_per_K": 1.0e-6,
-    "thermal_expansion_per_K": 3.4e-3,
+    "dn_dT_per_K": 1e-06,
+    "thermal_expansion_per_K": 0.0034,
     "refractive_index": 1.000293,
     "color": "#ffffff"
   },
-
   "G4_SILICON_DIOXIDE": {
     "name": "Fused Silica",
     "formula": "SiO2",
     "category": "Base Material",
-    "density_g_cm3": 2.20,
+    "density_g_cm3": 2.2,
     "specific_heat_J_per_kg_K": 700,
-    "dn_dT_per_K": 1.2e-5,
-    "thermal_expansion_per_K": 5.0e-7,
+    "dn_dT_per_K": 1.2e-05,
+    "thermal_expansion_per_K": 5e-07,
     "refractive_index": 1.45,
     "color": "#457b9d"
   },
-
   "SiO2": {
     "name": "Silicon Dioxide (Amorphous)",
     "formula": "SiO2",
@@ -39,11 +37,10 @@
     "refractive_index": 1.46,
     "density_g_cm3": 2.65,
     "specific_heat_J_per_kg_K": 740,
-    "dn_dT_per_K": 1.1e-5,
-    "thermal_expansion_per_K": 0.5e-6,
+    "dn_dT_per_K": 1.1e-05,
+    "thermal_expansion_per_K": 5e-07,
     "color": "#a8dadc"
   },
-
   "Si": {
     "name": "Crystalline Silicon",
     "formula": "Si",
@@ -52,11 +49,10 @@
     "refractive_index": 3.4,
     "density_g_cm3": 2.33,
     "specific_heat_J_per_kg_K": 710,
-    "dn_dT_per_K": 1.8e-4,
-    "thermal_expansion_per_K": 2.6e-6,
+    "dn_dT_per_K": 0.00018,
+    "thermal_expansion_per_K": 2.6e-06,
     "color": "#34495e"
   },
-
   "TiO2": {
     "name": "Titanium Dioxide",
     "formula": "TiO2",
@@ -65,24 +61,10 @@
     "refractive_index": 2.4,
     "density_g_cm3": 4.23,
     "specific_heat_J_per_kg_K": 680,
-    "dn_dT_per_K": 1.0e-4,
-    "thermal_expansion_per_K": 7.0e-6,
+    "dn_dT_per_K": 0.0001,
+    "thermal_expansion_per_K": 7e-06,
     "color": "#e63946"
   },
-
-  "Gd2O3": {
-    "name": "Gadolinium Oxide",
-    "formula": "Gd2O3",
-    "category": "Neutron-Sensitive Coating",
-    "neutron_capture_barns": 254000,
-    "refractive_index": 1.9,
-    "density_g_cm3": 7.41,
-    "specific_heat_J_per_kg_K": 230,
-    "dn_dT_per_K": 2.0e-5,
-    "thermal_expansion_per_K": 8.0e-6,
-    "color": "#c11a2b"
-  },
-
   "Al2O3": {
     "name": "Aluminum Oxide",
     "formula": "Al2O3",
@@ -90,11 +72,10 @@
     "refractive_index": 1.76,
     "density_g_cm3": 3.97,
     "specific_heat_J_per_kg_K": 770,
-    "dn_dT_per_K": 1.3e-5,
-    "thermal_expansion_per_K": 6.5e-6,
+    "dn_dT_per_K": 1.3e-05,
+    "thermal_expansion_per_K": 6.5e-06,
     "color": "#8d99ae"
   },
-
   "ZrO2": {
     "name": "Zirconium Dioxide",
     "formula": "ZrO2",
@@ -102,11 +83,10 @@
     "refractive_index": 2.1,
     "density_g_cm3": 5.68,
     "specific_heat_J_per_kg_K": 560,
-    "dn_dT_per_K": 1.8e-5,
-    "thermal_expansion_per_K": 7.5e-6,
+    "dn_dT_per_K": 1.8e-05,
+    "thermal_expansion_per_K": 7.5e-06,
     "color": "#2a9d8f"
   },
-
   "HfO2": {
     "name": "Hafnium Dioxide",
     "formula": "HfO2",
@@ -114,11 +94,10 @@
     "refractive_index": 2.0,
     "density_g_cm3": 9.68,
     "specific_heat_J_per_kg_K": 150,
-    "dn_dT_per_K": 1.5e-5,
-    "thermal_expansion_per_K": 5.8e-6,
+    "dn_dT_per_K": 1.5e-05,
+    "thermal_expansion_per_K": 5.8e-06,
     "color": "#8338ec"
   },
-
   "ZnO": {
     "name": "Zinc Oxide",
     "formula": "ZnO",
@@ -127,11 +106,10 @@
     "refractive_index": 2.0,
     "density_g_cm3": 5.61,
     "specific_heat_J_per_kg_K": 500,
-    "dn_dT_per_K": 1.6e-5,
-    "thermal_expansion_per_K": 6.0e-6,
+    "dn_dT_per_K": 1.6e-05,
+    "thermal_expansion_per_K": 6e-06,
     "color": "#ffd60a"
   },
-
   "ITO": {
     "name": "Indium Tin Oxide",
     "formula": "In-Sn-O",
@@ -139,11 +117,10 @@
     "refractive_index": 1.9,
     "density_g_cm3": 7.14,
     "specific_heat_J_per_kg_K": 250,
-    "dn_dT_per_K": 1.4e-5,
-    "thermal_expansion_per_K": 4.5e-6,
+    "dn_dT_per_K": 1.4e-05,
+    "thermal_expansion_per_K": 4.5e-06,
     "color": "#06d6a0"
   },
-
   "SiO2_solgel": {
     "name": "Sol-Gel Silica",
     "formula": "SiO2",
@@ -151,10 +128,9 @@
     "refractive_index": 1.45,
     "density_g_cm3": 2.0,
     "specific_heat_J_per_kg_K": 750,
-    "dn_dT_per_K": 1.2e-5,
+    "dn_dT_per_K": 1.2e-05,
     "color": "#a8dadc"
   },
-
   "Y2O3": {
     "name": "Yttrium Oxide",
     "formula": "Y2O3",
@@ -162,11 +138,10 @@
     "refractive_index": 1.92,
     "density_g_cm3": 5.01,
     "specific_heat_J_per_kg_K": 400,
-    "dn_dT_per_K": 1.7e-5,
-    "thermal_expansion_per_K": 7.2e-6,
+    "dn_dT_per_K": 1.7e-05,
+    "thermal_expansion_per_K": 7.2e-06,
     "color": "#ff6b6b"
   },
-
   "CeO2": {
     "name": "Cerium Oxide",
     "formula": "CeO2",
@@ -174,11 +149,10 @@
     "refractive_index": 2.2,
     "density_g_cm3": 7.65,
     "specific_heat_J_per_kg_K": 450,
-    "dn_dT_per_K": 1.9e-5,
-    "thermal_expansion_per_K": 6.8e-6,
+    "dn_dT_per_K": 1.9e-05,
+    "thermal_expansion_per_K": 6.8e-06,
     "color": "#ee964b"
   },
-
   "B4C": {
     "name": "Boron Carbide",
     "formula": "B4C",
@@ -187,11 +161,10 @@
     "refractive_index": 2.1,
     "density_g_cm3": 2.52,
     "specific_heat_J_per_kg_K": 1100,
-    "dn_dT_per_K": 1.2e-5,
-    "thermal_expansion_per_K": 5.6e-6,
+    "dn_dT_per_K": 1.2e-05,
+    "thermal_expansion_per_K": 5.6e-06,
     "color": "#003049"
   },
-
   "LiF": {
     "name": "Lithium Fluoride",
     "formula": "LiF",
@@ -200,11 +173,10 @@
     "refractive_index": 1.39,
     "density_g_cm3": 2.64,
     "specific_heat_J_per_kg_K": 1500,
-    "dn_dT_per_K": 8.0e-6,
-    "thermal_expansion_per_K": 4.0e-6,
+    "dn_dT_per_K": 8e-06,
+    "thermal_expansion_per_K": 4e-06,
     "color": "#fcbf49"
   },
-
   "CsI": {
     "name": "Cesium Iodide",
     "formula": "CsI",
@@ -212,11 +184,10 @@
     "refractive_index": 1.79,
     "density_g_cm3": 4.51,
     "specific_heat_J_per_kg_K": 200,
-    "dn_dT_per_K": 1.4e-4,
-    "thermal_expansion_per_K": 5.0e-6,
+    "dn_dT_per_K": 0.00014,
+    "thermal_expansion_per_K": 5e-06,
     "color": "#d62828"
   },
-
   "LYSO": {
     "name": "Lu-Yttrium Oxyorthosilicate",
     "formula": "Lu1.8Y0.2SiO5:Ce",
@@ -224,11 +195,10 @@
     "refractive_index": 1.82,
     "density_g_cm3": 7.1,
     "specific_heat_J_per_kg_K": 350,
-    "dn_dT_per_K": 1.6e-4,
-    "thermal_expansion_per_K": 6.0e-6,
+    "dn_dT_per_K": 0.00016,
+    "thermal_expansion_per_K": 6e-06,
     "color": "#e9c46a"
   },
-
   "PbO": {
     "name": "Lead Oxide",
     "formula": "PbO",
@@ -236,11 +206,10 @@
     "refractive_index": 2.6,
     "density_g_cm3": 9.53,
     "specific_heat_J_per_kg_K": 130,
-    "dn_dT_per_K": 2.0e-5,
-    "thermal_expansion_per_K": 1.4e-5,
+    "dn_dT_per_K": 2e-05,
+    "thermal_expansion_per_K": 1.4e-05,
     "color": "#212121"
   },
-
   "SnO2": {
     "name": "Tin Oxide",
     "formula": "SnO2",
@@ -248,11 +217,10 @@
     "refractive_index": 2.0,
     "density_g_cm3": 6.95,
     "specific_heat_J_per_kg_K": 270,
-    "dn_dT_per_K": 1.3e-5,
-    "thermal_expansion_per_K": 5.5e-6,
+    "dn_dT_per_K": 1.3e-05,
+    "thermal_expansion_per_K": 5.5e-06,
     "color": "#6a4c93"
   },
-
   "BaTiO3": {
     "name": "Barium Titanate",
     "formula": "BaTiO3",
@@ -260,11 +228,10 @@
     "refractive_index": 2.4,
     "density_g_cm3": 6.08,
     "specific_heat_J_per_kg_K": 600,
-    "dn_dT_per_K": 2.5e-5,
-    "thermal_expansion_per_K": 1.0e-5,
+    "dn_dT_per_K": 2.5e-05,
+    "thermal_expansion_per_K": 1e-05,
     "color": "#005f73"
   },
-
   "Bi2O3": {
     "name": "Bismuth Oxide",
     "formula": "Bi2O3",
@@ -272,8 +239,20 @@
     "refractive_index": 2.9,
     "density_g_cm3": 8.9,
     "specific_heat_J_per_kg_K": 120,
-    "dn_dT_per_K": 1.8e-5,
-    "thermal_expansion_per_K": 1.3e-5,
+    "dn_dT_per_K": 1.8e-05,
+    "thermal_expansion_per_K": 1.3e-05,
     "color": "#0a9396"
+  },
+  "Gd2O3": {
+    "name": "Gadolinium Oxide",
+    "formula": "Gd2O3",
+    "category": "Neutron-Sensitive Coating",
+    "neutron_capture_barns": 254000,
+    "refractive_index": 1.9,
+    "density_g_cm3": 7.41,
+    "specific_heat_J_per_kg_K": 230,
+    "dn_dT_per_K": 2e-05,
+    "thermal_expansion_per_K": 8e-06,
+    "color": "#55aa7f"
   }
 }

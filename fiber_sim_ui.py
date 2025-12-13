@@ -15,15 +15,16 @@ import re
 from io import StringIO
 from datetime import datetime  # ← Add this line
 from matplotlib.backends.backend_qt5agg import FigureCanvasQTAgg as FigureCanvas
+from matplotlib.backends.backend_qt5agg import NavigationToolbar2QT as NavToolbar
 from matplotlib.figure import Figure
 from PyQt5.QtWidgets import (
     QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
     QLabel, QLineEdit, QPushButton, QComboBox, QFileDialog, QTextEdit,
-    QSplitter, QFormLayout, QMessageBox, QTableWidget,
+    QSplitter, QFormLayout, QMessageBox, QTableWidget, QTabWidget, 
     QHeaderView, QGroupBox, QCheckBox, QColorDialog
 )
-from PyQt5.QtCore import Qt
-from PyQt5.QtCore import QThread, pyqtSignal
+from PyQt5.QtCore import Qt, QThread, pyqtSignal
+from tmm_engine import compute_optical_spectrum
 import traceback
 
 # === Move simulation logic to a worker thread ===
@@ -340,6 +341,7 @@ class FiberSimulationUI(QMainWindow):
         self.log.append("✅ Ready to simulate! Configure geometry and source.")
         self.init_ui()
         self.connect_symbol_selection()
+        self._reference_setup = False
         
 
     def browse_folder(self):
@@ -579,21 +581,29 @@ class FiberSimulationUI(QMainWindow):
         mat_group.setLayout(mat_layout)
         layout.addWidget(mat_group)
 
-        # --- Experimental Calibration ---
-        calib_group = QGroupBox("Experimental Calibration")
-        calib_layout = QFormLayout()
+        # === Photoliquid Scintillator Option ===
+        self.use_photoliquid = QCheckBox("🧪 Use Photoliquid Scintillator in Cavity")
+        self.use_photoliquid.setChecked(True)  # Default: enabled
+        self.use_photoliquid.stateChanged.connect(self.on_photoliquid_toggled)
 
-        self.sensitivity_input = QLineEdit("-78.8")
-        self.sensitivity_input.setPlaceholderText("e.g., -78.8")
-        calib_layout.addRow("Sensitivity S_exp (nm/RIU):", self.sensitivity_input)
+        # Optional: Custom liquid properties
+        self.liquid_n_input = QLineEdit()
+        self.liquid_n_input.setPlaceholderText("e.g., 1.56")
+        self.liquid_dn_dose_input = QLineEdit()
+        self.liquid_dn_dose_input.setPlaceholderText("e.g., 1e-4 per Gy")
 
-        calib_note = QLabel("💡 This comes from liquid refractometry (n = 1.33 → 1.40)")
-        calib_note.setStyleSheet("QLabel { font-size: 11px; color: gray; }")
-        calib_layout.addRow(calib_note)
+        liquid_layout = QFormLayout()
+        liquid_layout.addRow("Use Photoliquid:", self.use_photoliquid)
+        liquid_layout.addRow("Base Refractive Index (n):", self.liquid_n_input)
+        liquid_layout.addRow("dn/dDose (per Gy):", self.liquid_dn_dose_input)
 
-        calib_group.setLayout(calib_layout)
-        layout.addWidget(calib_group)
+        # Tip
+        tip = QLabel("💡 When checked, cavity medium becomes scintillator (e.g., Altima Gold LLT). Coatings act as mirrors.")
+        tip.setStyleSheet("QLabel { font-size: 10px; color: gray; }")
+        liquid_layout.addWidget(tip)
 
+        layout.addLayout(liquid_layout)
+    
 
         # 🚀 Run Simulation Button (Big and visible!)
         btn_run = QPushButton("🚀 Run Simulation")
@@ -603,6 +613,7 @@ class FiberSimulationUI(QMainWindow):
 
         # --- Stop Button ---
         self.btn_stop = QPushButton("⏹️ Stop Simulation")
+        self.btn_stop.setStyleSheet("font-size: 14px; font-weight: bold; padding: 12px;")
         self.btn_stop.clicked.connect(self.stop_simulation)
         self.btn_stop.setEnabled(False)  # Initially disabled
         layout.addWidget(self.btn_stop)
@@ -652,9 +663,38 @@ class FiberSimulationUI(QMainWindow):
         self.chart_widget.setLayout(QVBoxLayout())
         self.chart_widget.layout().addWidget(chart_group)
 
+        # Create tab widget
+        self.tabs = QTabWidget()
+        self.energy_tab = QWidget()
+        self.optics_tab = QWidget()
+
+        # === Energy Tab ===
+        self.energy_fig = Figure()
+        self.energy_canvas = FigureCanvas(self.energy_fig)
+        self.energy_ax = self.energy_fig.add_subplot(111)
+        energy_layout = QVBoxLayout()
+        energy_layout.addWidget(self.energy_canvas)
+        self.energy_toolbar = NavToolbar(self.energy_canvas, self)
+        energy_layout.addWidget(self.energy_toolbar)
+        self.energy_tab.setLayout(energy_layout)
+
+        # === Optics Tab ===
+        self.optics_fig = Figure()
+        self.optics_canvas = FigureCanvas(self.optics_fig)
+        self.optics_ax = self.optics_fig.add_subplot(111)
+        optics_layout = QVBoxLayout()
+        optics_layout.addWidget(self.optics_canvas)
+        self.optics_toolbar = NavToolbar(self.optics_canvas, self)
+        optics_layout.addWidget(self.optics_toolbar)
+        self.optics_tab.setLayout(optics_layout)
+
+        # Add tabs
+        self.tabs.addTab(self.energy_tab, "Energy Deposits")
+        self.tabs.addTab(self.optics_tab, "Optical Spectrum")
+
         # Add to splitter
         splitter.addWidget(preview_widget)
-        splitter.addWidget(self.chart_widget)
+        splitter.addWidget(self.tabs)
         splitter.setSizes([int(self.height() * 0.25), int(self.height() * 0.75)])  # 1:3 ratio
 
         layout.addWidget(splitter)
@@ -668,12 +708,17 @@ class FiberSimulationUI(QMainWindow):
         btn_analyze = QPushButton("🔬 Analyze Dose")
         btn_analyze.clicked.connect(self.analyze_dose)
 
+        # In create_analysis_tab() or similar
+        self.analyze_optics_btn = QPushButton("🔍 Analyze Optical Response")
+        self.analyze_optics_btn.clicked.connect(self.analyze_optical_response)
+       
         btn_export_summary = QPushButton("📄 Export Dose Summary")
         btn_export_summary.clicked.connect(self.export_dose_summary)
 
         btn_layout.addStretch()
-        btn_layout.addWidget(btn_export)
         btn_layout.addWidget(btn_analyze)
+        btn_layout.addWidget(self.analyze_optics_btn)
+        btn_layout.addWidget(btn_export)
         btn_layout.addWidget(btn_export_summary)
         btn_layout.addStretch()
 
@@ -724,40 +769,72 @@ class FiberSimulationUI(QMainWindow):
 
     def clear_plot(self):
         """
-        Completely clears the dose plot area and creates a fresh MplCanvas
+        Completely clears both energy and optical plot areas,
+        removes old canvases and colorbars, and creates fresh MplCanvases
         to prevent shrinking or overlapping on subsequent runs.
         """
-        try:
-            # Safely remove old canvas
-            if hasattr(self, 'canvas') and self.canvas is not None:
-                # Clear colorbar if exists
-                if hasattr(self, 'colorbar') and self.colorbar is not None:
-                    try:
-                        self.colorbar.ax.clear()
-                        self.colorbar.ax.figure.delaxes(self.colorbar.ax)
-                        self.colorbar = None
-                    except Exception as e:
-                        print(f"Colorbar cleanup warning: {e}")
+        def safe_remove_colorbar(canvas, attr_name="colorbar"):
+            """Safely remove colorbar associated with canvas"""
+            if hasattr(canvas, attr_name) and getattr(canvas, attr_name) is not None:
+                try:
+                    cbar = getattr(canvas, attr_name)
+                    setattr(canvas, attr_name, None)  # Prevent reuse
+                    cbar.ax.clear()
+                    cbar.ax.figure.delaxes(cbar.ax)
+                except Exception as e:
+                    print(f"Colorbar cleanup warning: {e}")
 
-                # Clear the axes
-                if hasattr(self.canvas, 'ax'):
-                    self.canvas.ax.clear()
+        try:
+            # --- Clear Energy Canvas ---
+            if hasattr(self, 'energy_canvas') and self.energy_canvas is not None:
+                # Remove colorbar
+                safe_remove_colorbar(self.energy_canvas, 'colorbar')
+
+                # Clear axes
+                if hasattr(self, 'energy_ax') and self.energy_ax is not None:
+                    self.energy_ax.clear()
 
                 # Remove from layout
-                self.chart_layout.removeWidget(self.canvas)
-                self.canvas.deleteLater()
-                self.canvas = None
+                if self.energy_canvas in self.tabs.widget(0).layout().children():
+                    self.tabs.widget(0).layout().removeWidget(self.energy_canvas)
+                self.energy_canvas.deleteLater()
+                self.energy_canvas = None
+                self.energy_ax = None
 
-            # Create new canvas
-            self.canvas = MplCanvas(self, width=8, height=6, dpi=100)
-            
-            # Add back to layout (assumes you have a layout named 'plot_layout')
-            self.chart_layout.addWidget(self.canvas)
+            # --- Clear Optical Canvas ---
+            if hasattr(self, 'optics_canvas') and self.optics_canvas is not None:
+                # Remove colorbar
+                safe_remove_colorbar(self.optics_canvas, 'colorbar')
 
-            # Optional: Reset data
+                # Clear axes
+                if hasattr(self, 'optics_ax') and self.optics_ax is not None:
+                    self.optics_ax.clear()
+
+                # Remove from layout
+                if self.optics_canvas in self.tabs.widget(1).layout().children():
+                    self.tabs.widget(1).layout().removeWidget(self.optics_canvas)
+                self.optics_canvas.deleteLater()
+                self.optics_canvas = None
+                self.optics_ax = None
+
+            # --- Recreate Canvases ---
+            self.energy_fig = Figure()
+            self.energy_canvas = FigureCanvas(self.energy_fig)
+            self.energy_ax = self.energy_fig.add_subplot(111)
+
+            self.optics_fig = Figure()
+            self.optics_canvas = FigureCanvas(self.optics_fig)
+            self.optics_ax = self.optics_fig.add_subplot(111)
+
+            # Add to tabs
+            self.tabs.widget(0).layout().addWidget(self.energy_canvas)
+            self.tabs.widget(1).layout().addWidget(self.optics_canvas)
+
+            # Reset data
             self.dose_data = None
+            self.dose_summary_df = None
 
-            self.log.append("✅ Plot area reset for new simulation.")
+            self.log.append("✅ Plot area reset: energy and optical canvases cleared.")
 
         except Exception as e:
             self.log.append(f"⚠️ Failed to clear plot: {str(e)}")
@@ -1180,6 +1257,10 @@ class FiberSimulationUI(QMainWindow):
     def toggle_second_line(self):
         checked = self.second_line_check.isChecked()
         self.second_line_val.setEnabled(checked)
+
+    def on_photoliquid_toggled(self):
+        status = "enabled" if self.use_photoliquid.isChecked() else "disabled"
+        self.log.append(f"🧪 Photoliquid mode {status}")
 
     def generate_layers_cfg(self):
         """Generate layers.cfg with type tags matching C++ LayerType enum"""
@@ -1712,7 +1793,7 @@ class FiberSimulationUI(QMainWindow):
             self.worker.finished.connect(self.on_simulation_finished)
             self.worker.error.connect(lambda msg: self.log.append(f"💥 Error: {msg}"))
             self.worker.simulation_finished.connect(self.load_results)
-
+            
             self.btn_stop.setEnabled(True)
             self.kill_hanging_docker_processes()
 
@@ -1727,6 +1808,104 @@ class FiberSimulationUI(QMainWindow):
         # Optional: Enable buttons again
         self.btn_stop.setEnabled(False)  # Disable when done
 
+    def compute_optical_spectrum(self):
+        """Compute FPI spectrum — supports standard air-gap and photoliquid-filled cavity"""
+        if not hasattr(self, 'dose_summary_df') or self.dose_summary_df is None:
+            return None, None
+
+        try:
+            import numpy as np
+
+            def tmm_reflectance(lambda_nm, n_list, d_list):
+                k0 = 2 * np.pi / lambda_nm
+                r_total = 0.0
+                for i in range(len(n_list) - 1):
+                    n1, n2 = n_list[i], n_list[i+1]
+                    d = d_list[i]  # μm
+                    r = (n1 - n2) / (n1 + n2)
+                    phase = k0 * n1 * (d * 1000)  # Convert μm → nm
+                    denominator = 1 + r * r_total * np.exp(-2j * phase)
+                    if abs(denominator) > 1e-15:
+                        r_total = (r + r_total * np.exp(-2j * phase)) / denominator
+                    if np.isnan(r_total) or np.isinf(r_total):
+                        r_total = 0.0
+                return abs(r_total)**2
+
+            # Base indices
+            n_core = 1.45
+            n_clad = 1.44
+            cavity_length_um = 150.0  # From capillary size
+
+            # Start building stack
+            n_list = [n_core]
+            d_list = [np.inf]
+
+            # Add all functional layers (coatings) from dose_summary_df
+            mirror_layers = []
+            for _, row in self.dose_summary_df.iterrows():
+                mat_name = row['Material']
+                layer_name = row['Layer']
+
+                if 'Core' in layer_name or 'Cladding' in layer_name:
+                    continue
+
+                props = self.material_db.materials.get(mat_name, {})
+                base_index = props.get('refractive_index', 1.5)
+                thickness_um = float(row['Length_mm']) * 1000
+
+                mirror_layers.append((base_index, thickness_um))
+
+            # Sort so innermost coating first
+            # They are added in order from UI — assume correct sequence
+
+            # Add mirror layers (TiO₂, Gd₂O₃, etc.)
+            for idx, (n_eff, thickness) in enumerate(mirror_layers):
+                n_list.append(n_eff)
+                d_list.append(thickness)
+
+            # === Decide cavity medium ===
+            if self.use_photoliquid.isChecked():
+                # Use photoliquid scintillator
+                try:
+                    # Try user input
+                    n_liquid_base = float(self.liquid_n_input.text().strip())
+                except:
+                    n_liquid_base = 1.56  # Default for Altima Gold LLT
+
+                try:
+                    dn_per_gy = float(self.liquid_dn_dose_input.text().strip())
+                except:
+                    dn_per_gy = 1e-4  # Typical estimate
+
+                total_dose_gy = self.dose_summary_df['Dose_Gy'].sum()
+                delta_n_liquid = dn_per_gy * total_dose_gy
+                n_cavity = n_liquid_base + delta_n_liquid
+                self.log.append(f"🧪 Using photoliquid: n = {n_liquid_base:.6f} + {delta_n_liquid:.3e} = {n_cavity:.6f}")
+
+            else:
+                # Standard air gap
+                n_cavity = 1.0
+                self.log.append("🌫️ Using air cavity (n=1.0)")
+
+            # Add cavity and cladding
+            n_list += [n_cavity, n_clad]
+            d_list += [cavity_length_um, np.inf]
+
+            # Wavelength sweep
+            lambdas = np.linspace(1400, 1600, 800)
+            R = [tmm_reflectance(l, n_list, d_list) for l in lambdas]
+            min_idx = np.argmin(R)
+            lambda_min = float(lambdas[min_idx])
+
+            df = pd.DataFrame({'Wavelength_nm': lambdas, 'Reflectance_a.u.': R})
+            return df, lambda_min
+
+        except Exception as e:
+            self.log.append(f"❌ TMM failed: {str(e)}")
+            import traceback
+            self.log.append(traceback.format_exc())
+            return None, None
+    
     def export_dose_summary(self):
         if self.dose_summary_df is None:
             QMessageBox.warning(self, "No Data", "Run 'Analyze Dose' first.")
@@ -1958,14 +2137,94 @@ class FiberSimulationUI(QMainWindow):
 
         except Exception as e:
             self.log.append(f"💥 Failed to save energy per layer: {str(e)}")
-
-                     
-    ############### Plotting & Analysis ################
-    def plot_dose(self):
-        if self.dose_data is None or self.canvas is None:
+    
+    def analyze_optical_response(self):
+        """Compute optical response using TMM with support for photoliquid mode"""
+        if not hasattr(self, 'dose_summary_df') or self.dose_summary_df is None:
+            self.log.append("❌ Run 'Analyze Dose' first.")
             return
 
-        ax = self.canvas.ax
+        try:
+            # === Step 1: Compute reference spectrum (no radiation effect) ===
+            ref_spectrum, lambda_0 = self.compute_optical_spectrum(use_radiation_effect=False)
+            if ref_spectrum is None or lambda_0 is None:
+                self.log.append("❌ Failed to compute reference spectrum.")
+                return
+
+            # === Step2: Compute perturbed spectrum (with radiation-induced Δn) ===
+            pert_spectrum, lambda_pert = self.compute_optical_spectrum(use_radiation_effect=True)
+            if pert_spectrum is None or lambda_pert is None:
+                self.log.append("❌ Failed to compute perturbed spectrum.")
+                return
+
+            # === Step3: Compute spectral shift ===
+            delta_lambda_pm = (lambda_pert - lambda_0) * 1000  # nm → pm
+
+            # === Step4: Log results clearly ===
+            if self.use_photoliquid.isChecked():
+                self.log.append(f"\n🧪 Photoliquid Scintillator Mode (e.g., Altima Gold LLT)")
+                self.log.append(f"   Base n: {getattr(self, '_liquid_n_base', 1.56):.6f}")
+                self.log.append(f"   dn/dDose: {getattr(self, '_dn_per_gy', 1e-4):.2e} /Gy")
+            else:
+                self.log.append(f"\n🌫️ Standard Air-Gap FPI Mode")
+
+            self.log.append(f"🎯 Predicted spectral shift: Δλ = {delta_lambda_pm:+.3f} pm")
+
+            # === Step5: Plot both spectra ===
+            ax = self.optics_ax
+            ax.clear()
+
+            wavelengths = ref_spectrum['Wavelength_nm']
+
+            ax.plot(wavelengths, ref_spectrum['Reflectance_a.u.'],
+                    'k--', linewidth=2,
+                    label=f"Reference\n$\\lambda_{{\\min}}$ = {lambda_0:.3f} nm")
+
+            ax.plot(wavelengths, pert_spectrum['Reflectance_a.u.'],
+                    'r-', linewidth=2,
+                    label=f"Perturbed\n$\\lambda_{{\\min}}$ = {lambda_pert:.3f} nm")
+
+            # Add arrow showing shift
+            ymin, ymax = ax.get_ylim()
+            ytext = ymin + 0.9*(ymax - ymin)
+            ax.annotate("", xy=(lambda_pert, ytext), xytext=(lambda_0, ytext),
+                        arrowprops=dict(arrowstyle="<->", color="C0", lw=2))
+            ax.text((lambda_0 + lambda_pert)/2, ytext*1.02, f"$\\Delta\\lambda = {delta_lambda_pm:+.1f}~\\mathrm{{pm}}$",
+                    ha='center', fontsize=10, color="C0")
+
+            ax.set_xlabel("Wavelength (nm)")
+            ax.set_ylabel("Reflectance (a.u.)")
+            ax.set_title("FPI Spectral Shift: Radiation-Induced RI Change")
+            ax.legend(fontsize=9)
+            ax.grid(True, alpha=0.3)
+            ax.set_xlim(wavelengths.min(), wavelengths.max())
+
+            # Redraw canvas
+            self.optics_canvas.draw()
+
+            # Save figure
+            fig_path = os.path.join(self.output_folder.text(), "fig2_optical_response.pdf") \
+                    if hasattr(self, 'output_folder') and self.output_folder.text() else "fig2_optical_response.pdf"
+            self.optics_canvas.figure.savefig(fig_path, dpi=300, bbox_inches='tight')
+            self.log.append(f"✅ Optical spectrum plotted: Δλ = {delta_lambda_pm:+.2f} pm")
+            self.log.append(f"📊 Saved as: {fig_path}")
+
+            # Store for export
+            self.predicted_wavelength_shift_nm = delta_lambda_pm / 1000
+            self.sensor_responsivity = delta_lambda_pm / self.dose_summary_df['Dose_Gy'].sum() \
+                                    if self.dose_summary_df['Dose_Gy'].sum() > 0 else 0.0
+
+        except Exception as e:
+            self.log.append(f"❌ Failed to analyze optical response: {str(e)}")
+            import traceback
+            self.log.append(traceback.format_exc())
+                        
+    ############### Plotting & Analysis ################
+    def plot_dose(self):
+        if self.dose_data is None or self.energy_ax is None:
+            return
+
+        ax = self.energy_ax
         ax.clear()
 
         df = self.dose_data.copy()
@@ -1978,20 +2237,15 @@ class FiberSimulationUI(QMainWindow):
         print(f"   Z range: [{df['Z'].min():.2f}, {df['Z'].max():.2f}] mm?")
         print(f"   Edep_keV range: [{df['Edep_keV'].min():.3f}, {df['Edep_keV'].max():.3f}]")
 
-        # === Step2: Compute radial position ===
+        # === Step 2: Compute radial position ===
         r = np.sqrt(df['X']**2 + df['Y']**2)
-
-        # Assume Z is in mm → convert to μm for consistency
-        z = df['Z'] * 1000  # mm → μm
-
+        z = df['Z'] * 1000  # Convert mm → μm
         E = df['Edep_keV']
 
-        # === Step3: Filter out non-fiber volumes safely ===
-        # Don't just remove 'World' — include partial matches
+        # === Step 3: Filter out non-fiber volumes safely ===
         world_like = df['Volume'].str.contains('World|Air|Vacuum', case=False, na=False)
         fiber_mask = ~world_like
 
-        # Optional: Include only known layers
         known_layers = ['Core', 'Cladding', 'TiO2', 'Gd2O3', 'Coating']
         layer_mask = pd.Series([False] * len(df))
         for lname in known_layers:
@@ -1999,20 +2253,20 @@ class FiberSimulationUI(QMainWindow):
 
         mask = fiber_mask & layer_mask
         if mask.sum() == 0:
-            mask = fiber_mask  # Fallback: show all non-world points
+            mask = fiber_mask  # Fallback
 
         if mask.sum() == 0:
             self.log.append("⚠️ No valid energy deposits found for plotting.")
             return
 
-        # === Step4: Scatter plot ===
+        # === Step 4: Scatter plot ===
         sc = ax.scatter(r[mask], z[mask],
                         c=E[mask], cmap='hot_r', s=8, alpha=0.9,
-                        edgecolor='none')
+                        edgecolors='none')
 
-        ax.set_xlabel("Radial Position (μm)")
-        ax.set_ylabel("Axial Position Z (μm)")
-        ax.set_title("Energy Deposits in Coated FPI Sensor")
+        ax.set_xlabel("Radial Position (μm)", fontsize=12)
+        ax.set_ylabel("Axial Position Z (μm)", fontsize=12)
+        ax.set_title("Energy Deposits in Coated FPI Sensor", fontsize=14)
 
         # Adjust axis limits based on actual data
         r_min, r_max = r[mask].min(), r[mask].max()
@@ -2021,7 +2275,8 @@ class FiberSimulationUI(QMainWindow):
         ax.set_xlim(0, max(80, r_max * 1.1))
         ax.set_ylim(z_min - 100, z_max + 100)
 
-        # === Step5: Colorbar ===
+        # === Step 5: Colorbar ===
+        # Safely remove old colorbar
         if hasattr(self, 'colorbar') and self.colorbar is not None:
             try:
                 cbar = self.colorbar
@@ -2031,40 +2286,26 @@ class FiberSimulationUI(QMainWindow):
             except Exception as e:
                 print(f"Colorbar cleanup warning: {e}")
 
+        # ✅ Use correct figure from energy_canvas
         try:
-            self.colorbar = self.canvas.figure.colorbar(sc, ax=ax, label="Energy Deposit (keV)")
+            self.colorbar = self.energy_fig.colorbar(sc, ax=ax, label="Energy Deposit (keV)")
         except Exception as e:
             print(f"Failed to create colorbar: {e}")
             self.colorbar = None
 
-        # === Step6: Redraw ===
-        self.canvas.draw()
-        self.canvas.figure.savefig("fig1_energy_deposit.pdf", dpi=300)
-        self.log.append(f"✅ Plotted {mask.sum()} energy deposits.")
-        # In plot_dose() or analyze_dose()
-        df = self.dose_data.copy()
+        # === Step 6: Redraw Canvas ===
+        self.energy_canvas.draw()
 
-        # Assume you have direction info (or approximate from position)
-        # For now, use radial spread as proxy
-        r_start = np.sqrt(df['X']**2 + df['Y']**2)
-        z_start = df['Z']
+        # === Optional: Save Figure ===
+        if hasattr(self, 'output_folder') and self.output_folder.text():
+            fig_path = os.path.join(self.output_folder.text(), "fig1_energy_deposits.pdf")
+            self.energy_fig.savefig(fig_path, dpi=300, bbox_inches='tight')
+            self.log.append(f"✅ Energy deposit plot saved: {fig_path}")
+        else:
+            self.energy_fig.savefig("fig1_energy_deposits.pdf", dpi=300, bbox_inches='tight')
+            self.log.append("✅ Energy deposit plot saved locally.")
 
-        # Approximate tanθ ≈ r / z_offset
-        theta_deg = np.arctan2(r_start, 0.1) * 180 / np.pi  # Assume source at -0.1 mm
-
-        # Bin by angle
-        bins = [0, 5, 10, 15, 20, 90]
-        labels = ['0–5°', '5–10°', '10–15°', '15–20°', '>20°']
-        df['AngleBin'] = pd.cut(theta_deg, bins=bins, labels=labels, include_lowest=True)
-
-        # Count interactions per bin
-        interaction_count = df.groupby('AngleBin').size()
-        energy_deposited = df.groupby('AngleBin')['Edep_keV'].sum()
-
-        print("Interactions by Angle:")
-        print(interaction_count)
-        print("\nTotal Energy Deposit by Angle:")
-        print(energy_deposited)
+        self.log.append(f"📊 Plotted {mask.sum()} energy deposits.")
     
     ############### Dose Analysis ################
     def analyze_dose(self):
@@ -2089,11 +2330,23 @@ class FiberSimulationUI(QMainWindow):
 
             for i in range(self.layer_table.rowCount()):
                 w = lambda j: self.layer_table.cellWidget(i, j)
-                name = str(w(0).text()).strip()
-                mat_name = str(w(1).currentText()).strip()
-                ir_um = float(w(3).text())
-                orad_um = float(w(4).text())
-                length_mm = float(w(5).text())
+                try:
+                    name = str(w(0).text()).strip()
+                    mat_name = str(w(1).currentText()).strip()
+
+                    # ✅ Use correct columns: assume col2=Type, col3=IR, col4=OR, col5=Length
+                    def get_clean_value(widget):
+                        txt = widget.currentText().strip() if hasattr(widget, 'currentText') else widget.text().strip()
+                        cleaned = ''.join(c for c in txt if c.isdigit() or c in '.-')
+                        return float(cleaned) if cleaned else 0.0
+
+                    ir_um = get_clean_value(w(3))
+                    orad_um = get_clean_value(w(4))
+                    length_mm = get_clean_value(w(5))
+
+                except Exception as e:
+                    self.log.append(f"⚠️ Invalid input in row {i}: {str(e)}")
+                    continue
 
                 if i == 0:
                     core_name = name
@@ -2108,6 +2361,10 @@ class FiberSimulationUI(QMainWindow):
                         'orad': orad_um,
                         'length': length_mm
                     })
+
+            if not core_name or not clad_name:
+                self.log.append("❌ Core or Cladding not defined in first two rows.")
+                return
 
             self.log.append(f"🔹 Identified: Core='{core_name}', Cladding='{clad_name}'")
             if coating_rows:
@@ -2169,7 +2426,7 @@ class FiberSimulationUI(QMainWindow):
 
                 mass_kg = density_kg_m3 * area_m2 * thickness_m
                 if mass_kg <= 0:
-                    self.log.append(f"⚠️ Zero mass for {name} — check geometry")
+                    self.log.append(f"⚠️ Zero mass for {c['name']} — check geometry")
                     mass_kg = 1e-20  # Prevent divide-by-zero
                 delta_t_k = absorbed_energy_j / (mass_kg * heat_capacity_j_kgk) if mass_kg > 0 else 0
                 dn_dt = material_props.get(c['material'], {}).get('dn_dT_per_K', 1.2e-5)
@@ -2197,16 +2454,6 @@ class FiberSimulationUI(QMainWindow):
             self.dose_summary_df = pd.DataFrame(results)
             self.display_analysis_results()
 
-            # === Step 5: Compute System-Level Response Using Sensitivity ===
-            try:
-                S_exp_nm_per_RIU = float(self.sensitivity_input.text())  # e.g., -78.8 nm/RIU
-            except ValueError:
-                self.log.append("⚠️ Invalid sensitivity value. Using -78.8 nm/RIU.")
-                S_exp_nm_per_RIU = -78.8
-
-            # Assume dn = 1e-6 corresponds to 1 RIU change
-            dn_per_RIU = 1e-6
-
             # Weighted average Δn by energy deposition
             weighted_delta_n = (
                 (self.dose_summary_df['Delta_n'] * self.dose_summary_df['Energy_J']).sum() /
@@ -2217,24 +2464,17 @@ class FiberSimulationUI(QMainWindow):
             total_mass_kg = self.dose_summary_df['Mass_kg'].sum()
             D_eff_Gy = total_energy_j / max(total_mass_kg, 1e-20)
 
-            # Predicted wavelength shift
-            delta_lambda_nm = S_exp_nm_per_RIU * (weighted_delta_n / dn_per_RIU)
-            delta_lambda_pm = delta_lambda_nm * 1000
-
             # Responsivity
-            responsivity_pm_per_Gy = delta_lambda_pm / D_eff_Gy if D_eff_Gy > 0 else 0.0
-
+    
             # Log final response
             self.log.append("\n🧩 System-Level Sensor Response:")
             self.log.append(f"  Effective Dose: {D_eff_Gy:.3e} Gy")
             self.log.append(f"  Effective Δn: {weighted_delta_n:.3e}")
-            self.log.append(f"  → Predicted Δλ: {delta_lambda_nm:.3e} nm ({delta_lambda_pm:.3f} pm)")
-            self.log.append(f"  📊 Radiation-Induced Spectral Responsivity: {responsivity_pm_per_Gy:.3f} pm/Gy")
-
+            self.log.append("\n💡 Optical spectrum analysis will be performed after dose calculation.")
+            self.log.append("📊 Run 'Analyze Optical Response' to compute spectral shift via TMM.")
+         
             # Store for export
-            self.sensor_responsivity = responsivity_pm_per_Gy
-            self.predicted_wavelength_shift_nm = delta_lambda_nm
-
+    
         except Exception as e:
             self.log.append(f"💥 Dose analysis failed: {str(e)}")
             import traceback
@@ -2260,14 +2500,17 @@ class FiberSimulationUI(QMainWindow):
         core_columns = ['Volume', 'X', 'Y', 'Z', 'Edep_keV', 'StepLength_nm']
         export_df = self.dose_data[core_columns].copy()
 
-        # Add derived summary data (optional)
+        # Add derived summary data
         summary_data = []
         for vol in export_df['Volume'].unique():
             subset = export_df[export_df['Volume'] == vol]
-            total_edep = subset['Edep_keV'].sum() * 1.602e-16  # J
+            total_edep_j = (subset['Edep_keV'] * 1.602e-16).sum()
             count = len(subset)
-            summary_data.append({'Volume': vol, 'Step Count': count, 'Total Energy (J)': total_edep})
-
+            summary_data.append({
+                'Volume': vol,
+                'Step Count': count,
+                'Total Energy (J)': total_edep_j
+            })
         summary_df = pd.DataFrame(summary_data)
 
         # Open file dialog for .xlsx
@@ -2280,29 +2523,74 @@ class FiberSimulationUI(QMainWindow):
             excel_file += '.xlsx'
 
         try:
-            # Write to Excel with multiple sheets
+            # Use ExcelWriter as context manager
             with pd.ExcelWriter(excel_file, engine='openpyxl') as writer:
+                # === 1. Raw Energy Deposits ===
                 export_df.to_excel(writer, sheet_name='Energy_Deposits', index=False)
+
+                # === 2. Summary per Volume ===
                 summary_df.to_excel(writer, sheet_name='Summary', index=False)
-                # Optionally save geometry
+
+                # === 3. Dose Analysis Results (if available) ===
+                if hasattr(self, 'dose_summary_df') and self.dose_summary_df is not None:
+                    self.dose_summary_df.to_excel(writer, sheet_name='Dose_Summary', index=False)
+                    self.log.append("✅ Saved dose analysis results.")
+
+                # === 4. Geometry ===
                 if hasattr(self, 'layer_table'):
                     geom_data = []
                     for i in range(self.layer_table.rowCount()):
                         w = lambda j: self.layer_table.cellWidget(i, j)
-                        geom_data.append({
-                            'Layer': w(0).text(),
-                            'Material': w(1).currentText(),
-                            'Layer type': w(2).currentText() if isinstance(w(2), QComboBox) else "Cylindrical",
-                            'Inner Radius (μm)': w(3).text(),
-                            'Outer Radius (μm)': w(4).text(),
-                            'Length (mm)': w(5).text()
-                        })
-                    pd.DataFrame(geom_data).to_excel(writer, sheet_name='Geometry', index=False)
+                        try:
+                            layer_name = w(0).text().strip()
+                            material = w(1).currentText().strip()
 
-            self.log.append(f"📊 Saved results to {excel_file}")
-            
-            # Optional: Open folder
-            # os.startfile(os.path.dirname(excel_file))
+                            # Handle geometry inputs safely
+                            def get_val(widget):
+                                txt = widget.currentText() if hasattr(widget, 'currentText') else widget.text()
+                                try:
+                                    return float(txt.strip())
+                                except:
+                                    return 0.0
+
+                            layer_type = w(2).currentText() if hasattr(w(2), 'currentText') else "Cylindrical"
+                            inner_rad = get_val(w(3))
+                            outer_rad = get_val(w(4))
+                            length_mm = get_val(w(5))
+
+                            geom_data.append({
+                                'Layer': layer_name,
+                                'Material': material,
+                                'Type': layer_type,
+                                'Inner Radius (μm)': inner_rad,
+                                'Outer Radius (μm)': outer_rad,
+                                'Length (mm)': length_mm
+                            })
+                        except Exception as e:
+                            self.log.append(f"⚠️ Failed to read row {i}: {str(e)}")
+                            continue
+
+                    pd.DataFrame(geom_data).to_excel(writer, sheet_name='Geometry', index=False)
+                    self.log.append("✅ Saved sensor geometry.")
+
+                # === 5. Optical Spectrum ===
+                spectrum_df = self.compute_optical_spectrum()
+                if spectrum_df is not None and not spectrum_df.empty:
+                    spectrum_df.to_excel(writer, sheet_name='Optical_Spectrum', index=False)
+                    self.log.append("✅ Saved optical spectrum to Excel.")
+        
+                if hasattr(self, 'reference_spectrum') and self.reference_spectrum is not None:
+                    self.reference_spectrum.to_excel(writer, sheet_name='Reference_Spectrum', index=False)
+                    self.log.append("✅ Saved reference spectrum.")
+
+                if spectrum_df is not None:
+                    spectrum_df.to_excel(writer, sheet_name='Perturbed_Spectrum', index=False)
+                    self.log.append("✅ Saved perturbed spectrum.")
+                else:
+                    self.log.append("⚠️ No optical spectrum data to save.")
+
+            # Final log after successful save
+            self.log.append(f"📊 Full results saved to: {excel_file}")
 
         except Exception as e:
             QMessageBox.critical(self, "Export Failed", f"Could not save file:\n{str(e)}")
