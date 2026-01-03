@@ -8,7 +8,7 @@
 
 // Physics list and models
 #include "FTFP_BERT.hh" // For FTFP_BERT
-#include "QGSP_BERT_HP.hh"                            
+//#include "QGSP_BERT_HP.hh"                            
 #include "G4EmStandardPhysics_option4.hh"             // High-precision EM
 #include "G4DecayPhysics.hh"                          // Decay processes
 #include "G4RadioactiveDecayPhysics.hh"               // Radioactive decay
@@ -28,7 +28,7 @@ int main(int argc, char** argv) {
     // Set up physics
     G4VModularPhysicsList* physicsList = new FTFP_BERT;                     // Base physics
     physicsList->ReplacePhysics(new G4EmStandardPhysics_option4());         // Better low-energy EM
-    physicsList->RegisterPhysics(new G4DecayPhysics());
+    //physicsList->RegisterPhysics(new G4DecayPhysics());
     physicsList->RegisterPhysics(new G4RadioactiveDecayPhysics());
     runManager->SetUserInitialization(physicsList);
 
