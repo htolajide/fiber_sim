@@ -1,0 +1,6 @@
+/vis/open OGL 600x600-0+0
+/vis/drawVolume
+/vis/viewer/set/style surface
+/vis/viewer/set/viewpointThetaPhi 90 0 deg
+/vis/scene/add/trajectories smooth
+/vis/scene/endOfEventAction accumulate

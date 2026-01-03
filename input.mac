@@ -2,14 +2,14 @@
 # End-Face Coated FPI Source Configuration
 
 /run/initialize
-/gps/particle e-
-/gps/energy 1.662 MeV
+/gps/particle gamma
+/gps/energy 1.17 MeV
 # Source Setup: End-Face Illumination
 /gps/pos/type Plane
 /gps/pos/shape Circle
-/gps/pos/radius 75.05 um
-/gps/pos/centre 0 0 -0.1 mm
+/gps/pos/radius 80 um
+/gps/pos/centre 0 0 -0.05 mm
 /gps/ang/type iso
-/gps/ang/maxtheta  0 deg
-/gps/ene/type Mono
-/run/beamOn 500000
+/gps/ang/mintheta 0 deg
+/gps/ang/maxtheta  5 deg
+/run/beamOn 50000

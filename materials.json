@@ -30,6 +30,17 @@
     "refractive_index": 1.45,
     "color": "#457b9d"
   },
+  "Altima_Gold_LLT": {
+  "name": "Altima Gold LLT",
+  "density_g_cm3": 0.95,
+  "formula": "C12H26",
+  "refractive_index": 1.56,
+  "specific_heat_J_per_kg_K": 1800,
+  "dn_dT_per_K": 1.2e-4,
+  "thermal_expansion_per_K": 7e-04,
+  "category": "Scintillating Liquid",
+  "color": "#ffd700"
+  },
   "SiO2": {
     "name": "Silicon Dioxide (Amorphous)",
     "formula": "SiO2",

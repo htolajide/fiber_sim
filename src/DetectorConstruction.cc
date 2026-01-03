@@ -14,7 +14,7 @@
 #include "G4Element.hh"
 #include "G4Exception.hh"
 #include "G4ThreeVector.hh"
-#include "G4UserLimits.hh"  // ✅ Required for step limits
+#include "G4UserLimits.hh"
 #include <fstream>
 #include <sstream>
 #include <set>
@@ -78,7 +78,6 @@ G4Material* CreateCustomMaterial(const G4String& name) {
         return mat;
     }
 
-    // === New: ZnO (Zinc Oxide) ===
     if (name == "ZnO") {
         G4double density = 5.61 * g/cm3;
         G4Material* mat = new G4Material("ZnO", density, 2);
@@ -87,18 +86,21 @@ G4Material* CreateCustomMaterial(const G4String& name) {
         return mat;
     }
 
-    // === New: ITO (Indium Tin Oxide) ===
-    // Approximate composition: In₂O₃:SnO₂ = 90:10 by weight
     if (name == "ITO") {
         G4double density = 7.14 * g/cm3;
         G4Material* mat = new G4Material("ITO", density, 3);
-        mat->AddElement(nist->FindOrBuildElement("In"), 2);  // Indium
-        mat->AddElement(nist->FindOrBuildElement("Sn"), 1);  // Tin
-        mat->AddElement(nist->FindOrBuildElement("O"), 3);   // Oxygen (approx.)
+        mat->AddElement(nist->FindOrBuildElement("In"), 2);
+        mat->AddElement(nist->FindOrBuildElement("Sn"), 1);
+        mat->AddElement(nist->FindOrBuildElement("O"), 3);
         return mat;
     }
 
-    return nullptr;  // For unknown materials
+    // === Handle Altima Gold LLT ===
+    if (name == "Altima Gold LLT" || name == "Altima_Gold_LLT") {
+        return nist->FindOrBuildMaterial("G4_POLYSTYRENE");
+    }
+
+    return nullptr;
 }
 
 DetectorConstruction::~DetectorConstruction() = default;
@@ -129,7 +131,7 @@ DetectorConstruction::DetectorConstruction() {
                    << " | L=" << len << " mm"
                    << " | Type=" << typeStr << G4endl;
 
-            AddLayer(name, matName, ir*um, orad*um, len*mm, typeStr);
+            AddLayer(name, matName, ir*um, orad*um, len*mm, typeStr);  // ✅ Now valid: 6 args
         } else {
             G4cout << "❌ Failed to parse line: " << line << G4endl;
         }
@@ -161,19 +163,21 @@ void DetectorConstruction::AddLayer(const G4String& name,
     lyr.material = mat;
 
     // Convert string to enum
-    if (typeStr == "END_FACE_DISK") {
-        lyr.type = END_FACE_DISK;
-    } else if (typeStr == "SOLID_CYLINDER") {
+    if (typeStr == "SOLID_CYLINDER") {
         lyr.type = SOLID_CYLINDER;
     } else if (typeStr == "HOLLOW_CYLINDER") {
         lyr.type = HOLLOW_CYLINDER;
+    } else if (typeStr == "END_FACE_DISK") {
+        lyr.type = END_FACE_DISK;
     } else if (typeStr == "MICROCAVITY_SPACER") {
         lyr.type = MICROCAVITY_SPACER;
-    } else {
+    } else if (typeStr == "TAPERED_SECTION") {
         lyr.type = TAPERED_SECTION;
+    } else {
+        G4cerr << "⚠️ Unknown layer type: " << typeStr << ". Defaulting to HOLLOW_CYLINDER." << G4endl;
+        lyr.type = HOLLOW_CYLINDER;
     }
 
-    // Add to member vector
     layers.push_back(lyr);
 
     G4cout << "📌 Queued: " << name << " [" << matName << "] "
@@ -185,7 +189,7 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
     G4NistManager* nist = G4NistManager::Instance();
 
     // === 1. World Volume ===
-    G4Box* solidWorld = new G4Box("World", 1.*cm, 1.*cm, 1.*m);  // 1 meter long!
+    G4Box* solidWorld = new G4Box("World", 1.*cm, 1.*cm, 1.*m);
     G4LogicalVolume* logicWorld = new G4LogicalVolume(solidWorld,
                                                       nist->FindOrBuildMaterial("G4_AIR"),
                                                       "World");
@@ -198,10 +202,10 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
                                                      0);
 
     // Build along Z-axis starting near source
-    G4double z_position = 0.0;  // Start at origin
+    G4double z_position = 0.0;
 
     // --- Step 1: Construct all layers ---
-    std::vector<G4LogicalVolume*> coatingLogics;  // Store coating logical volumes
+    std::vector<G4LogicalVolume*> coatingLogics;
 
     for (const auto& lyr : layers) {
         G4LogicalVolume* logVol = nullptr;
@@ -247,39 +251,37 @@ G4VPhysicalVolume* DetectorConstruction::Construct()
             G4cout << "🔶 Built Shell: " << lyr.name << " at Z=" << z_position/mm << " mm" << G4endl;
         }
 
-        // --- Step 2: Mark coating layers as sensitive ---
+        // --- Step2: Mark coating layers as sensitive ---
         G4String matName = lyr.material->GetName();
-        std::set<G4String> coatingMaterials = {"TiO2", "Gd2O3", "ZrO2", "Al2O3", "HfO2"};  // Expandable list
+        std::set<G4String> coatingMaterials = {"TiO2", "Gd2O3", "ZrO2", "Al2O3", "HfO2", "Si", "SiO2", "ZnO", "ITO", "C12H26"};
 
         if (coatingMaterials.find(matName) != coatingMaterials.end()) {
-            coatingLogics.push_back(logVol);  // ✅ Only once!
+            coatingLogics.push_back(logVol);
             G4cout << "🎯 Sensitivity enabled for: " << lyr.name << " (" << matName << ")" << G4endl;
         }
     }
 
-    // --- Step 3: Create and assign Multi-Sensitive Detector ---
+    // --- Step3: Create and assign Multi-Sensitive Detector ---
     if (!coatingLogics.empty()) {
         G4SDManager* sdManager = G4SDManager::GetSDMpointer();
         G4MultiSensitiveDetector* multiSD = new G4MultiSensitiveDetector("CoatingSD");
         sdManager->AddNewDetector(multiSD);
 
-        // Assign to all coating logical volumes
         for (auto* logic : coatingLogics) {
             logic->SetSensitiveDetector(multiSD);
             G4cout << "📌 Assigned sensitive detector to: " << logic->GetName() << "_PV" << G4endl;
         }
     }
 
-    // --- Step 4: Set step limits in thin coating layers ---
+    // --- Step4: Set step limits in thin coating layers ---
     G4double maxStep = 50 * nm;
     G4UserLimits* stepLimit = new G4UserLimits(maxStep);
 
     for (const auto& lyr : layers) {
         G4String matName = lyr.material->GetName();
-        std::set<G4String> thinLayers = {"TiO2", "Gd2O3", "ZrO2", "Al2O3", "HfO2", "ZnO"};  // Same as coating materials
+        std::set<G4String> thinLayers = {"TiO2", "Gd2O3", "ZrO2", "Al2O3", "HfO2", "ZnO", "Si", "SiO2", "ITO", "C12H26"};
 
         if (thinLayers.find(matName) != thinLayers.end()) {
-            // Find matching logical volume by name
             for (auto* logic : coatingLogics) {
                 if (logic->GetName() == lyr.name) {
                     logic->SetUserLimits(stepLimit);
