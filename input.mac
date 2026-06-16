@@ -5,7 +5,7 @@
 /control/macroPath /home/geant4/work 
 /control/execute vis.mac
 /gps/particle gamma
-/gps/energy 1.17 MeV
+/gps/energy 0.662 MeV
 # Source Setup: End-Face Illumination
 /gps/pos/type Plane
 /gps/pos/shape Circle
@@ -15,4 +15,4 @@
 /gps/ang/mintheta 0 deg
 /gps/ang/maxtheta  5 deg
 /gps/ene/type Mono
-/run/beamOn 500000
+/run/beamOn 50000

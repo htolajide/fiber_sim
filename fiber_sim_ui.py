@@ -329,65 +329,66 @@ class MaterialDB:
         return self.materials.get(name)
 
 def tmm_reflectance(lambda_nm, n_list, d_list):
-        """
-        Compute normal-incidence reflectance using Transfer Matrix Method (TMM).
+    """
+    Compute normal-incidence reflectance using Transfer Matrix Method.
+    
+    Parameters:
+        lambda_nm: Wavelength in nanometers
+        n_list: List of refractive indices [n_core, n_layer1, ..., n_clad]
+        d_list: Layer thicknesses in micrometers (np.inf = semi-infinite)
         
-        Parameters:
-            lambda_nm: Wavelength in nanometers
-            n_list: List of refractive indices [n0, n1, ..., nN]
-            d_list: List of layer thicknesses in micrometers (inf = semi-infinite)
-        
-        Returns:
-            Reflectance R = |r_total|^2
-        """
-        try:
-            k0 = 2 * np.pi / lambda_nm  # Wave number in vacuum (nm⁻¹)
+    Returns:
+        Reflectance R = |r_total|^2
+    """
+    try:
+        # Wave number in vacuum (nm⁻¹)
+        k0 = 2 * np.pi / lambda_nm
 
-            # Start with identity matrix
-            M_total = np.eye(2, dtype=complex)
+        # Start with identity matrix
+        M_total = np.eye(2, dtype=complex)
 
-            # Propagate through each layer
-            for i in range(len(n_list)):
-                n_i = n_list[i]
-                d_i = d_list[i]
+        for i in range(len(n_list)):
+            n_i = n_list[i]
+            d_i = d_list[i]
 
-                if d_i == np.inf:
-                    # Semi-infinite medium → no phase accumulation
-                    continue
+            # Skip semi-infinite media
+            if d_i == np.inf:
+                continue
 
-                # Phase accumulation in layer
-                phi = k0 * n_i * (d_i * 1000)  # Convert μm → nm
+            # Convert thickness to nm
+            d_nm = d_i * 1000  # μm → nm
+            phi = k0 * n_i * d_nm
 
-                # Layer transfer matrix
-                cos_phi = np.cos(phi)
-                sin_phi = np.sin(phi)
+            # Phase terms
+            cos_phi = np.cos(phi)
+            sin_phi = np.sin(phi)
 
-                # Avoid division by zero in case of small n_i
-                if abs(n_i) < 1e-6:
-                    return 0.0
+            # Avoid zero index
+            if abs(n_i) < 1e-6:
+                return 0.0
 
-                m11 = cos_phi
-                m12 = 1j * sin_phi / n_i
-                m21 = 1j * n_i * sin_phi
-                m22 = cos_phi
+            # Characteristic matrix of layer
+            m11 = cos_phi
+            m12 = 1j * sin_phi / n_i
+            m21 = 1j * n_i * sin_phi
+            m22 = cos_phi
 
-                M_i = np.array([[m11, m12], [m21, m22]], dtype=complex)
+            M_i = np.array([[m11, m12], [m21, m22]], dtype=complex)
 
-                # Multiply from left: M_total = M_i @ M_total
-                M_total = np.dot(M_i, M_total)
+            # Multiply: M_total = M_i @ M_total
+            M_total = np.dot(M_i, M_total)
 
-            # Reflection coefficient
-            if abs(M_total[0,0]) > 1e-15:
-                r_total = M_total[1,0] / M_total[0,0]
-            else:
-                r_total = 0.0 + 0j
+        # Overall reflection amplitude
+        if abs(M_total[0,0]) > 1e-15:
+            r_total = M_total[1,0] / M_total[0,0]
+        else:
+            r_total = 0.0
 
-            # Return power reflectance
-            return float(np.abs(r_total)**2)
+        return float(np.abs(r_total)**2)
 
-        except Exception as e:
-            print(f"❌ TMM error at λ={lambda_nm}: {str(e)}")
-            return 0.0
+    except Exception as e:
+        print(f"❌ TMM error at λ={lambda_nm}: {str(e)}")
+        return 0.0
         
 class FiberSimulationUI(QMainWindow):
     def __init__(self):
@@ -686,10 +687,10 @@ class FiberSimulationUI(QMainWindow):
         layout.addLayout(liquid_layout)
 
         # 🚀 Run Simulation Button (Big and visible!)
-        btn_run = QPushButton("🚀 Run Simulation")
-        btn_run.setStyleSheet("font-size: 14px; font-weight: bold; padding: 12px;")
-        btn_run.clicked.connect(self.run_simulation)  # ← Connects to your method
-        layout.addWidget(btn_run)
+        self.btn_run = QPushButton("🚀 Run Simulation")
+        self.btn_run.setStyleSheet("font-size: 14px; font-weight: bold; padding: 12px;")
+        self.btn_run.clicked.connect(self.run_simulation)  # ← Connects to your method
+        layout.addWidget(self.btn_run)
 
         # --- Stop Button ---
         self.btn_stop = QPushButton("⏹️ Stop Simulation")
@@ -701,9 +702,11 @@ class FiberSimulationUI(QMainWindow):
         # =======================
         # 6. Log Console
         # =======================
+        log_label = QLabel("<b>Logs:</b>")
         self.log = QTextEdit()
         self.log.setReadOnly(True)
         self.log.append("✅ Ready to simulate!")
+        layout.addWidget(log_label)
         layout.addWidget(self.log)
         self.default_layers()
         widget.setLayout(layout)
@@ -1861,9 +1864,12 @@ class FiberSimulationUI(QMainWindow):
             self.worker.stop()  # Signal worker to stop
             self.log.append("🛑 Stopping simulation...")
             self.btn_stop.setEnabled(False)
+            self.btn_run.setEnabled(True)
+
 
     def run_simulation(self):
         """Start the simulation after generating config files"""
+        self.btn_run.setEnabled(False)
         # === Reset plot area ===
         self.clear_plot()  # ← Clean before every run
         # === Clear Log Box First ===
@@ -1904,6 +1910,7 @@ class FiberSimulationUI(QMainWindow):
         self.log.append("🏁 Simulation finished.")
         # Optional: Enable buttons again
         self.btn_stop.setEnabled(False)  # Disable when done
+        self.btn_run.setEnabled(True)  # Enable when done
 
     def compute_optical_spectrum(self, use_radiation_effect=True):
         """
@@ -1984,13 +1991,14 @@ class FiberSimulationUI(QMainWindow):
                 self.log.append("🌫️ Air cavity (n=1.0)")
 
             # === DEBUG MODE: Artificially enhance shift for visibility ===
-            DEBUG_MODE = True
-            if DEBUG_MODE:
-                if use_radiation_effect:
-                    n_cavity += 1e-4  # Simulate ionization-induced Δn
-                    self.log.append("🔍 DEBUG: Artificial Δn = +0.0001 applied to cavity")
-                else:
-                    self.log.append("🔍 DEBUG: Reference spectrum – no artificial Δn")
+            # === OPTIONAL: Enable only for visualization purposes ===
+            USE_ARTIFICIAL_SHIFT_FOR_VISIBILITY = True  # Set to True ONLY when plotting
+
+            if USE_ARTIFICIAL_SHIFT_FOR_VISIBILITY and use_radiation_effect:
+                n_cavity += 1e-5
+                self.log.append("🔍 DEBUG: Artificial Δn = +0.0001 applied to cavity (visualization only)")
+            else:
+                self.log.append("✅ Using real effective_delta_n only – no artificial enhancement")
 
             # Close the stack: cavity + cladding
             n_list += [n_cavity, n_clad]
@@ -2294,7 +2302,76 @@ class FiberSimulationUI(QMainWindow):
 
         except Exception as e:
             self.log.append(f"💥 Failed to save energy per layer: {str(e)}")
-    
+
+    def save_simulation_logs(self, delta_lambda_pm):
+        """
+        Save two logs:
+        1. simulation_logs.txt - Clean summary of run parameters and Δλ
+        2. logbox_log.txt - Full copy of all messages shown in GUI log
+
+        Uses self.log as QTextEdit widget.
+        """
+        from datetime import datetime
+
+        # === Get timestamp ===
+        timestamp_str = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
+        # === Extract key input parameters safely ===
+        try:
+            thickness_nm = int(self.total_functional_thickness_nm)
+        except:
+            thickness_nm = "Unknown"
+
+        try:
+            dose_kgy = getattr(self, 'effective_dose_gy', 0.0) / 1000.0  # Gy → kGy
+        except:
+            dose_kgy = 0.0
+
+        try:
+            energy_mev = float(getattr(self.energy_input, 'value', lambda: 0.662)())
+        except:
+            energy_mev = 0.662
+
+        try:
+            source_type = self.source_type_combo.currentText().strip()
+        except:
+            source_type = "Unknown"
+
+        # === 1. Save Structured Log ===
+        structured_line = (
+            f"{timestamp_str} | "
+            f"Thickness={thickness_nm} nm, "
+            f"Dose={dose_kgy:.4e} kGy, "
+            f"Energy={energy_mev:.3f} MeV, "
+            f"Source={source_type}, "
+            f"Delta_Lambda_pm={delta_lambda_pm:+.3f}"
+        )
+
+        try:
+            with open("simulation_logs.txt", "a", encoding='utf-8') as f:
+                f.write(structured_line + "\n")
+            print(f"📝 Saved structured log: {structured_line}")
+        except Exception as e:
+            print(f"❌ Failed to write simulation_logs.txt: {str(e)}")
+
+        # === 2. Save Full Content from self.log (QTextEdit) ===
+        if hasattr(self, 'log') and isinstance(self.log, QTextEdit):
+            try:
+                full_content = self.log.toPlainText()
+
+                with open("logbox_log.txt", "a", encoding='utf-8') as f:
+                    f.write("────────────────────────────────────\n")
+                    f.write(f"SIMULATION RUN LOG – {timestamp_str}\n")
+                    f.write("────────────────────────────────────\n")
+                    f.write(full_content.strip())
+                    f.write("\n\n")  # Spacer between runs
+
+                print("📄 Full GUI log saved to 'logbox_log.txt'")
+            except Exception as e:
+                print(f"❌ Failed to save full log box content: {str(e)}")
+        else:
+            print("⚠️ No valid self.log found (should be QTextEdit)")
+       
     def analyze_optical_response(self):
         """Compute optical response using TMM with support for photoliquid mode"""
         if not hasattr(self, 'dose_summary_df') or self.dose_summary_df is None:
@@ -2308,18 +2385,18 @@ class FiberSimulationUI(QMainWindow):
                 self.log.append("❌ Failed to compute reference spectrum.")
                 return
 
-            # === Step2: Compute perturbed spectrum (with radiation-induced Δn) ===
+            # === Step 2: Compute perturbed spectrum (with radiation-induced Δn) ===
             pert_spectrum, lambda_pert = self.compute_optical_spectrum(use_radiation_effect=True)
             if pert_spectrum is None or lambda_pert is None:
                 self.log.append("❌ Failed to compute perturbed spectrum.")
                 return
 
-            # === Step3: Compute spectral shift ===
+            # === Step 3: Compute spectral shift ===
             delta_lambda_pm = (lambda_pert - lambda_0) * 1000  # nm → pm
 
-            # === Step4: Log results clearly ===
+            # === Step 4: Log results clearly ===
             if self.use_photoliquid.isChecked():
-                self.log.append(f"\n🧪 Photoliquid Scintillator Mode (e.g., Altima Gold LLT)")
+                self.log.append(f"\n🧪 Photoliquid Scintillator Mode")
                 self.log.append(f"   Base n: {getattr(self, '_liquid_n_base', 1.56):.6f}")
                 self.log.append(f"   dn/dDose: {getattr(self, '_dn_per_gy', 1e-4):.2e} /Gy")
             else:
@@ -2327,7 +2404,10 @@ class FiberSimulationUI(QMainWindow):
 
             self.log.append(f"🎯 Predicted spectral shift: Δλ = {delta_lambda_pm:+.3f} pm")
 
-            # === Step5: Plot both spectra ===
+            # After computing delta_lambda_pm
+            self.save_simulation_logs(delta_lambda_pm=delta_lambda_pm)
+
+            # === Step 5: Plot both spectra ===
             ax = self.optics_ax
             ax.clear()
 
@@ -2346,7 +2426,8 @@ class FiberSimulationUI(QMainWindow):
             ytext = ymin + 0.9*(ymax - ymin)
             ax.annotate("", xy=(lambda_pert, ytext), xytext=(lambda_0, ytext),
                         arrowprops=dict(arrowstyle="<->", color="C0", lw=2))
-            ax.text((lambda_0 + lambda_pert)/2, ytext*1.02, f"$\\Delta\\lambda = {delta_lambda_pm:+.1f}~\\mathrm{{pm}}$",
+            ax.text((lambda_0 + lambda_pert)/2, ytext*1.02,
+                    f"$\\Delta\\lambda = {delta_lambda_pm:+.1f}~\\mathrm{{pm}}$",
                     ha='center', fontsize=10, color="C0")
 
             ax.set_xlabel("Wavelength (nm)")
@@ -2361,18 +2442,41 @@ class FiberSimulationUI(QMainWindow):
 
             # Save figure
             fig_path = os.path.join(self.output_folder.text(), "fig2_optical_response.pdf") \
-                    if hasattr(self, 'output_folder') and self.output_folder.text() else "fig2_optical_response.pdf"
+                    if hasattr(self, 'output_folder') and self.output_folder.text() \
+                    else "fig2_optical_response.pdf"
             self.optics_canvas.figure.savefig(fig_path, dpi=300, bbox_inches='tight')
+
+            # Log detailed values
             self.log.append(f"Raw Ref λ_min = {lambda_0:.6f} nm")
             self.log.append(f"Raw Perturbed λ_min = {lambda_pert:.6f} nm")
             self.log.append(f"Raw Δλ = {(lambda_pert - lambda_0)*1000:.6f} pm")
             self.log.append(f"✅ Optical spectrum plotted: Δλ = {delta_lambda_pm:+.2f} pm")
             self.log.append(f"📊 Saved as: {fig_path}")
 
-            # Store for export
+            # === FINAL STEP: Combine Features + Target and Export ===
+            if not hasattr(self, 'ml_training_features'):
+                self.log.append("⚠️ No prior dose features found. Run 'Analyze Dose' first.")
+                return
+
+            # Build final row
+            data = {
+                **self.ml_training_features,           # Input features
+                'delta_lambda_pm': float(delta_lambda_pm)  # Output label
+            }
+
+            # Save to CSV
+            output_dir = self.output_folder.text()
+            csv_file = os.path.join(output_dir, "ml_dataset.csv")
+
+            df = pd.DataFrame([data])
+            df.to_csv(csv_file, mode='a', header=not os.path.exists(csv_file), index=False)
+
+            self.log.append(f"🎯 Full ML training row exported: Δλ = {delta_lambda_pm:+.3f} pm")
+            self.log.append(f"📁 File updated: {csv_file}")
+
+            # Store for GUI use
             self.predicted_wavelength_shift_nm = delta_lambda_pm / 1000
-            self.sensor_responsivity = delta_lambda_pm / self.dose_summary_df['Dose_Gy'].sum() \
-                                    if self.dose_summary_df['Dose_Gy'].sum() > 0 else 0.0
+            self.sensor_responsivity = delta_lambda_pm / self.effective_dose_gy if self.effective_dose_gy > 0 else 0.0
 
         except Exception as e:
             self.log.append(f"❌ Failed to analyze optical response: {str(e)}")
@@ -2660,48 +2764,74 @@ class FiberSimulationUI(QMainWindow):
 
             # === Export Data for ML Training ===
             try:
-                # Safely get source inputs
-                try:
-                    gamma_energy_MeV = float(self.energy_input.value()) \
-                                    if hasattr(self.energy_input, 'value') \
-                                    else float(self.energy_input.text() or 0.662)
-                except:
-                    gamma_energy_MeV = 0.662
+                # Safely determine photon energy based on source type
+                source_text = self.source_type_combo.currentText().strip()
 
+                if 'Cs-137' in source_text:
+                    gamma_energy_MeV = 0.662
+                    self.log.append("☢️ Using Cs-137 source energy: 0.662 MeV")
+                elif 'Co-60' in source_text:
+                    gamma_energy_MeV = 1.33
+                    self.log.append("☢️ Using Co-60 source energy: 1.33 MeV")
+                elif 'Am-241' in source_text:
+                    gamma_energy_MeV = 0.0595
+                    self.log.append("☢️ Using Am-241 source energy: 0.0595 MeV")
+                elif 'Na-22' in source_text:
+                    gamma_energy_MeV = 0.511
+                    self.log.append("☢️ Using Na-22 source energy: 0.511 MeV")
+                elif 'Thermal Neutrons' in source_text:
+                    gamma_energy_MeV = 0.0253e-6  # 0.0253 eV in MeV
+                    self.log.append("🌀 Using Thermal Neutrons energy: 0.0253 meV")
+                elif 'X-ray' in source_text or 'Custom' in source_text:
+                    # Use user input
+                    try:
+                        if hasattr(self.energy_input, 'value'):
+                            gamma_energy_MeV = float(self.energy_input.value())
+                        else:
+                            txt = self.energy_input.text().strip()
+                            gamma_energy_MeV = float(txt) if txt else 0.662
+                    except ValueError:
+                        gamma_energy_MeV = 0.662
+                        self.log.append("⚠️ Invalid custom energy → using 0.662 MeV")
+                    self.log.append(f"⚡ Using custom energy: {gamma_energy_MeV:.3f} MeV")
+                else:
+                    gamma_energy_MeV = 0.662
+                    self.log.append("❓ Unknown source → defaulting to 0.662 MeV")
+
+                # Read number of events
                 try:
                     num_events = int(self.num_particles.text())
                 except:
                     num_events = 500000
+                    self.log.append("⚠️ Invalid event count → using 500k")
 
-                source_text = self.source_type_combo.currentText().strip()
+                # Determine source type for export
+                if 'Cs-137' in source_text:
+                    source_type = 'Cs137'
+                elif 'Co-60' in source_text:
+                    source_type = 'Co60'
+                elif 'Am-241' in source_text:
+                    source_type = 'Am241'
+                elif 'Na-22' in source_text:
+                    source_type = 'Na22'
+                elif 'Thermal Neutrons' in source_text:
+                    source_type = 'Thermal Neutrons'
+                else:
+                    source_type = 'Custom'
 
-                data = {
-                    'coating_thickness_nm': self.total_functional_thickness_nm,
-                    'gamma_dose_kGy': self.effective_dose_kgy,
-                    'photon_energy_MeV': gamma_energy_MeV,
-                    'num_events': num_events,
-                    'source_type_Cs137': 1 if 'Cs137' in source_text else 0,
-                    'source_type_Co60': 1 if 'Co60' in source_text else 0,
-                    'source_type_Xray': 1 if 'X-ray' in source_text else 0,
-                    'effective_delta_n': self.effective_delta_n,
-                    'timestamp': pd.Timestamp.now().strftime('%H:%M.%S')
+                # Prepare data row
+                # At end of analyze_dose()
+                self.ml_training_features = {
+                    'coating_thickness_nm': int(self.total_functional_thickness_nm),
+                    'gamma_dose_kGy': float(self.effective_dose_kgy),
+                    'photon_energy_MeV': float(gamma_energy_MeV),
+                    'source_type': source_type,
+                    'effective_delta_n': float(self.effective_delta_n),
+                   'timestamp': pd.Timestamp.now().isoformat()  # → "2026-01-05T14:37:22"
                 }
-
-                output_dir = self.output_folder.text()
-                output_file = os.path.join(output_dir, "ml_dataset.csv")
-
-                df = pd.DataFrame([data])
-                df.to_csv(output_file, mode='a', header=not os.path.exists(output_file), index=False)
-
-                self.log.append(f"📊 ML training data exported: thickness={data['coating_thickness_nm']} nm")
-                self.log.append(f"📁 Saved to: {output_file}")
-
-            except PermissionError:
-                self.log.append("❌ Cannot write to ml_dataset.csv: file is locked (open in Excel?) or permission denied.")
-
+                self.log.append("💡 Optical response not computed yet. Run 'Analyze Optical Response' to finalize ML data.")
             except Exception as e:
-                self.log.append(f"❌ Failed to export ML data: {str(e)}")
-
+                self.log.append(f"❌ Failed to prepare ML  {str(e)}")
         except Exception as e:
             self.log.append(f"💥 Dose analysis failed: {str(e)}")
             import traceback
