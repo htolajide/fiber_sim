@@ -590,8 +590,31 @@ class FiberSimulationUI(QMainWindow):
         source_layout.addRow("", self.second_line_layout)
 
         # === Number of Particles ===
+        # === Dose Mode Selection ===
+        dose_mode_layout = QHBoxLayout()
+        dose_mode_layout.addWidget(QLabel("<b>Simulation Mode:</b>"))
+        self.dose_mode_combo = QComboBox()
+        self.dose_mode_combo.addItems(["Dose-Based (Gy)", "Particle Count"])
+        self.dose_mode_combo.currentTextChanged.connect(self.on_dose_mode_change)
+        dose_mode_layout.addWidget(self.dose_mode_combo)
+        dose_mode_layout.addStretch()
+        source_layout.addRow(dose_mode_layout)
+
+        # === Dose Input (for dose-based mode) ===
+        self.dose_input = QLineEdit("1000")  # Default 1000 Gy = 1 kGy
+        self.dose_unit = QLabel("Gy")
+        dose_hbox = QHBoxLayout()
+        dose_hbox.addWidget(self.dose_input)
+        dose_hbox.addWidget(self.dose_unit)
+        self.dose_label = QLabel("Target Dose:")
+        source_layout.addRow(self.dose_label, dose_hbox)
+
+        # === Number of Particles (auto-calculated, read-only) ===
+        self.num_particles_label = QLabel("Number of Particles:")
         self.num_particles = QLineEdit("50000")
-        source_layout.addRow("Number of Particles:", self.num_particles)
+        self.num_particles.setReadOnly(True)  # Will be auto-calculated
+        self.num_particles.setToolTip("Auto-calculated from dose")
+        source_layout.addRow(self.num_particles_label, self.num_particles)
 
         source_group.setLayout(source_layout)
         layout.addWidget(source_group)
@@ -840,6 +863,55 @@ class FiberSimulationUI(QMainWindow):
             self.second_line_check.hide()
             self.second_line_val.hide() if hasattr(self, 'second_line_val') else None
 
+    def calculate_particles_from_dose(self, target_dose_gy, particle_energy_mev, layers):
+        """
+        Calculate number of particles needed to achieve target dose.
+        
+        Dose (Gy) = Total Energy (J) / Mass (kg)
+        Total Energy = N_particles × E_particle (J)
+        
+        Therefore: N_particles = (Dose × Mass) / E_particle
+        """
+        try:
+            # Convert particle energy to Joules
+            e_particle_j = particle_energy_mev * 1.602e-13  # MeV → J
+            
+            # Calculate total mass of target layers (kg)
+            total_mass_kg = 0.0
+            
+            for layer in layers:
+                # Get layer dimensions
+                ir_m = layer['ir_um'] * 1e-6
+                or_m = layer['orad_um'] * 1e-6
+                length_m = layer['length_mm'] * 1e-3
+                
+                # Volume (m³)
+                volume_m3 = np.pi * (or_m**2 - ir_m**2) * length_m
+                
+                # Get density from material database
+                mat_name = layer['material']
+                density_gcm3 = self.material_props.get(mat_name, {}).get('density_g_cm3', 2.20)
+                density_kg_m3 = density_gcm3 * 1000  # g/cm³ → kg/m³
+                
+                # Mass
+                mass_kg = volume_m3 * density_kg_m3
+                total_mass_kg += mass_kg
+            
+            # Calculate required particles
+            # N = (Dose × Mass) / E_particle
+            n_particles = (target_dose_gy * total_mass_kg) / e_particle_j
+            
+            # Apply safety factor (not all energy is absorbed)
+            # Typical absorption efficiency for gamma in thin films: 0.1-10%
+            absorption_efficiency = 0.01  # 1% conservative estimate
+            n_particles = n_particles / absorption_efficiency
+            
+            return int(n_particles), total_mass_kg
+            
+        except Exception as e:
+            self.log.append(f"️ Error calculating particles: {str(e)}")
+            return 50000, 0.0  # Fallback
+        
     def toggle_second_line(self):
         state = self.second_line_check.isChecked()
         self.second_line_val.setEnabled(state)
@@ -1422,116 +1494,155 @@ class FiberSimulationUI(QMainWindow):
             out_dir = self.output_folder.text()
             mac_path = os.path.join(out_dir, "input.mac")
 
-            with open(mac_path, 'w') as f:
-                f.write("# Geant4 Macro File - Auto-generated\n")
-                f.write(f"# {self.sensor_type.currentText()} Source Configuration\n\n")
+            # Get layers for mass calculation (required for dose mode)
+            layers = self.get_layers_from_ui()
 
-                # === Determine Sensor Type ===
-                sensor_type = self.sensor_type.currentText()
+            # === 1. Determine Source Particle and Energy ===
+            source = self.source_type_combo.currentText()
+            particle = "gamma"
+            energy_mev = 0.662  # Default
 
-                particle = "gamma"
-                energy = "0.662 MeV"
+            if source == "Custom":
+                particle = self.particle_combo.currentText()
+                try:
+                    energy_mev = float(self.energy_input.text())
+                except:
+                    energy_mev = 0.662
+            elif "Cs-137" in source:
+                energy_mev = 0.662
+            elif "Co-60" in source:
+                energy_mev = 1.17  # Primary line
+            elif "Am-241" in source:
+                energy_mev = 0.0595
+            elif "Na-22" in source:
+                energy_mev = 0.511
+            elif "Thermal Neutron" in source:
+                particle = "neutron"
+                energy_mev = 0.025e-6  # 0.025 eV converted to MeV
 
-                f.write("/run/initialize\n")
-                f.write("/control/macroPath /home/geant4/work \n")
-                f.write("/control/execute vis.mac\n")
-
-                # Determine source
-                source = self.source_type_combo.currentText()
-
-                if source == "Custom":
-                    particle = self.particle_combo.currentText()
-                    try:
-                        energy = float(self.energy_input.text())
-                        f.write(f"/gps/particle {particle}\n")
-                        f.write(f"/gps/energy {energy} MeV\n")
-                        
-                        if self.second_line_check.isChecked():
-                            try:
-                                second_energy = float(self.second_line_val.text())
-                                f.write(f"/gps/hist/point {second_energy} MeV\n")
-                                f.write(f"/gps/hist/weight 1.0\n")  # Equal probability
-                            except:
-                                pass
-                    except:
-                        f.write("/gps/particle gamma\n/gps/energy 0.662 MeV\n")
-
-                elif "Cs-137" in source:
-                    f.write("/gps/particle gamma\n")
-                    f.write("/gps/energy 0.662 MeV\n")
-
-                elif "Co-60" in source:
-                    f.write("/gps/particle gamma\n")
-                    f.write("/gps/energy 1.17 MeV\n")
-                    #f.write("/gps/hist/weight 1.0\n")
-
-                elif "Am-241" in source:
-                    f.write("/gps/particle gamma\n")
-                    f.write("/gps/energy 0.0595 MeV\n")
-
-                elif "Na-22" in source:
-                    f.write("/gps/particle gamma\n")
-                    f.write("/gps/energy 0.511 MeV\n")
-                    #f.write("/gps/hist/weight 1.0\n")
-
-                elif "Thermal Neutron" in source:
-                    f.write("/gps/particle neutron\n")
-                    f.write("/gps/energy 0.025 eV\n")  # Thermal energy
-                            
-                # === Source Setup Based on Sensor Type ===
-                if sensor_type == "In-Fiber Microcavity":
-                    f.write("# Source Setup: Transverse Illumination for Microcavity\n")
-                    f.write("/gps/pos/type Plane\n")
-                    f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 75.05 um\n")           # Cover radial extent
-                    f.write("/gps/pos/centre 0 0 -0.1 mm\n")      # Z = -0.1 mm (just before fiber)
-                #   Emit backward along +Z axis (into fiber)
-                    f.write("/gps/ang/type iso\n")
-                #   f.write("/gps/ang/mintheta 170 deg\n")   # Nearly backward
-                    f.write("/gps/ang/maxtheta 0 deg\n")   # Directly backward    # Focused cone      # Small forward cone
-                    # Wide cone
-                    f.write("/gps/ene/type Mono\n")
-
-                else:
-                    # Standard End-Face Coated FPI
-                    f.write("# Source Setup: End-Face Illumination\n")
-                    f.write("/gps/pos/type Plane\n")
-                    f.write("/gps/pos/shape Circle\n")
-                    f.write("/gps/pos/radius 80.05 um\n")         # Slightly larger than coating
-                    f.write("/gps/pos/centre 0 0 -0.001 mm\n")      # Z = -0.1 mm (just before fiber)
-                    # Emit backward along +Z axis (into fiber)
-                    f.write("/gps/ang/type iso\n")
-                    f.write("/gps/ang/mintheta 0 deg\n")   # Nearly backward
-                    f.write("/gps/ang/maxtheta  5 deg\n")   # Directly backward
-                    f.write("/gps/ene/type Mono\n")
-                
-                # Run Settings
-                n_events = 1000
+            # === 2. Calculate Number of Particles based on Mode ===
+            mode = "Particle Count"
+            n_events = 1000
+            
+            # Check if Dose-Based mode is active
+            if hasattr(self, 'dose_mode_combo') and self.dose_mode_combo.currentText() == "Dose-Based (Gy)":
+                mode = "Dose-Based (Gy)"
+                try:
+                    target_dose_gy = float(self.dose_input.text())
+                    
+                    # Calculate required particles
+                    n_events, total_mass = self.calculate_particles_from_dose(
+                        target_dose_gy, energy_mev, layers
+                    )
+                    
+                    self.log.append(f" Mode: {mode} | Target Dose: {target_dose_gy:.2f} Gy")
+                    self.log.append(f"📊 Total target mass: {total_mass:.3e} kg")
+                    self.log.append(f"📊 Calculated particles: {n_events:,}")
+                    
+                    # Update UI read-only field if it exists
+                    if hasattr(self, 'num_particles'):
+                        self.num_particles.setText(f"{n_events}")
+                except Exception as e:
+                    self.log.append(f"⚠️ Failed to calculate particles from dose: {str(e)}")
+                    n_events = 50000  # Fallback
+            else:
+                # Standard Particle Count mode
                 if hasattr(self, 'num_particles'):
                     try:
                         n_events = int(self.num_particles.text())
                     except:
                         pass
-                f.write(f"/run/beamOn {n_events}\n")
-                # Confirm vis.mac exists before running simulation
-                vis_mac_path = os.path.join(self.output_folder.text(), "vis.mac")
-                if not os.path.exists(vis_mac_path):
-                    # Create it if missing
-                    with open(vis_mac_path, 'w') as f:
-                        f.write("/vis/open OGL\n")
-                        f.write("/vis/drawVolume\n")
-                        f.write("/vis/viewer/set/style surface\n")
-                        f.write("/vis/viewer/set/viewpointThetaPhi 90 0 deg\n")
-                        f.write("/vis/scene/add/axes 1 mm\n")
-                        f.write("/vis/scene/endOfEventAction accumulate\n")
-                    self.log.append("✅ Created vis.mac for visualization")
-                else:
-                    self.log.append("✅ Found vis.mac")
 
-            self.log.append(f"✅ Generated input.mac with {n_events} events")
+            # === 3. Write Macro File ===
+            with open(mac_path, 'w') as f:
+                f.write("# Geant4 Macro File - Auto-generated\n")
+                f.write(f"# Mode: {mode}\n")
+                if mode == "Dose-Based (Gy)":
+                    f.write(f"# Target Dose: {self.dose_input.text()} Gy\n")
+                f.write(f"# {self.sensor_type.currentText()} Source Configuration\n\n")
+
+                f.write("/run/initialize\n")
+                f.write("/control/macroPath /home/geant4/work \n")
+                f.write("/control/execute vis.mac\n")
+
+                # --- Source Definition ---
+                f.write(f"/gps/particle {particle}\n")
+                
+                # Write energy (handle eV for thermal neutrons)
+                if particle == "neutron" and energy_mev < 1e-3:
+                    f.write(f"/gps/energy {energy_mev * 1e6} eV\n")
+                else:
+                    f.write(f"/gps/energy {energy_mev} MeV\n")
+
+                # Handle multi-line sources (Histograms)
+                use_histogram = False
+                if source == "Custom" and hasattr(self, 'second_line_check') and self.second_line_check.isChecked():
+                    use_histogram = True
+                    try:
+                        second_energy = float(self.second_line_val.text())
+                        f.write(f"/gps/hist/point {energy_mev} MeV\n/gps/hist/weight 1.0\n")
+                        f.write(f"/gps/hist/point {second_energy} MeV\n/gps/hist/weight 1.0\n")
+                    except:
+                        pass
+                elif "Co-60" in source:
+                    use_histogram = True
+                    f.write("/gps/hist/point 1.17 MeV\n/gps/hist/weight 1.0\n")
+                    f.write("/gps/hist/point 1.33 MeV\n/gps/hist/weight 1.0\n")
+                elif "Na-22" in source:
+                    use_histogram = True
+                    f.write("/gps/hist/point 0.511 MeV\n/gps/hist/weight 1.0\n")
+                    f.write("/gps/hist/point 1.275 MeV\n/gps/hist/weight 0.9\n") # 90% branching ratio
+
+                if use_histogram:
+                    f.write("/gps/ene/type User\n")
+                else:
+                    f.write("/gps/ene/type Mono\n")
+
+                # --- Source Geometry Setup ---
+                sensor_type = self.sensor_type.currentText()
+                if sensor_type == "In-Fiber Microcavity":
+                    f.write("# Source Setup: Transverse Illumination for Microcavity\n")
+                    f.write("/gps/pos/type Plane\n")
+                    f.write("/gps/pos/shape Circle\n")
+                    f.write("/gps/pos/radius 75.05 um\n")
+                    f.write("/gps/pos/centre 0 0 -0.1 mm\n")
+                    f.write("/gps/ang/type iso\n")
+                    f.write("/gps/ang/maxtheta 0 deg\n")
+                else:
+                    # Standard End-Face Coated FPI
+                    f.write("# Source Setup: End-Face Illumination\n")
+                    f.write("/gps/pos/type Plane\n")
+                    f.write("/gps/pos/shape Circle\n")
+                    f.write("/gps/pos/radius 80.05 um\n")
+                    f.write("/gps/pos/centre 0 0 -0.001 mm\n")
+                    f.write("/gps/ang/type iso\n")
+                    f.write("/gps/ang/mintheta 0 deg\n")
+                    f.write("/gps/ang/maxtheta 5 deg\n")
+                
+                # --- Run Settings ---
+                f.write(f"/run/beamOn {n_events}\n")
+                
+            # === 4. Handle vis.mac ===
+            vis_mac_path = os.path.join(out_dir, "vis.mac")
+            if not os.path.exists(vis_mac_path):
+                # Use 'vf' to avoid shadowing the main macro file handle 'f'
+                with open(vis_mac_path, 'w') as vf:
+                    vf.write("/vis/open OGL\n")
+                    vf.write("/vis/drawVolume\n")
+                    vf.write("/vis/viewer/set/style surface\n")
+                    vf.write("/vis/viewer/set/viewpointThetaPhi 90 0 deg\n")
+                    vf.write("/vis/scene/add/axes 1 mm\n")
+                    vf.write("/vis/scene/endOfEventAction accumulate\n")
+                self.log.append("✅ Created vis.mac for visualization")
+            else:
+                self.log.append("✅ Found vis.mac")
+
+            self.log.append(f"✅ Generated input.mac with {n_events:,} events")
             
         except Exception as e:
             self.log.append(f"❌ Failed to generate input.mac: {str(e)}")
+            import traceback
+            self.log.append(traceback.format_exc())
     
     def plot_end_face_fpi(self, ax):
         """Draw end-face coated FPI: axial stack of layers"""
@@ -2146,6 +2257,22 @@ class FiberSimulationUI(QMainWindow):
             })
         return layers
     
+    def on_dose_mode_change(self):
+        """Toggle between dose-based and particle-based input"""
+        mode = self.dose_mode_combo.currentText()
+        if mode == "Dose-Based (Gy)":
+            self.dose_input.show()
+            self.dose_unit.show()
+            self.num_particles_label.hide()
+            self.num_particles.hide()
+            self.log.append("📊 Mode: Dose-based (will calculate required particles)")
+        else:
+            self.dose_input.hide()
+            self.dose_unit.hide()
+            self.num_particles_label.show()
+            self.num_particles.show()
+            self.log.append("🔢 Mode: Particle count-based")
+            
     def get_layer_masses_from_ui(self):
         """Extract layer geometry and compute mass using UI table"""
         volumes_to_mass = {}
@@ -2631,6 +2758,8 @@ class FiberSimulationUI(QMainWindow):
             return None
 
         try:
+            import re  # Moved import here for safety
+            
             # Load material properties
             materials_file = os.path.join(os.path.dirname(__file__), "materials.json")
             with open(materials_file, 'r') as f:
@@ -2653,7 +2782,6 @@ class FiberSimulationUI(QMainWindow):
                     mat_name = str(w(1).currentText()).strip()
 
                     def clean_text(txt):
-                        import re
                         match = re.search(r'[\d.]+', str(txt))
                         return float(match.group()) if match else 0.0
 
@@ -2733,6 +2861,7 @@ class FiberSimulationUI(QMainWindow):
                 self.log.append("⚠️ No functional coating layers found.")
                 self.effective_delta_n = 0.0
                 self.total_functional_thickness_nm = 0.0
+                self.effective_dose_gy = 0.0
                 return
 
             # Total axial thickness of stack (for ML export)
@@ -2747,7 +2876,7 @@ class FiberSimulationUI(QMainWindow):
             else:
                 self.effective_delta_n = 0.0
 
-            # Compute effective dose in kGy
+            # Compute effective dose in Gy and kGy
             total_mass_func = func_df['Mass_kg'].sum()
             self.effective_dose_gy = total_energy_func / max(total_mass_func, 1e-20)
             self.effective_dose_kgy = self.effective_dose_gy / 1000.0  # Gy → kGy
@@ -2758,9 +2887,19 @@ class FiberSimulationUI(QMainWindow):
             self.log.append(f"  Effective Dose: {self.effective_dose_gy:.3e} Gy ({self.effective_dose_kgy:.3e} kGy)")
             self.log.append(f"  Effective Δn: {self.effective_delta_n:.3e}")
 
-            # Store for downstream use
-            self.effective_delta_n = self.effective_delta_n
-            self.effective_dose_gy = self.effective_dose_gy
+            # === ✅ DOSE VERIFICATION (Moved AFTER effective_dose_gy is calculated) ===
+            if hasattr(self, 'dose_mode_combo') and self.dose_mode_combo.currentText() == "Dose-Based (Gy)":
+                try:
+                    target_dose = float(self.dose_input.text())
+                    actual_dose = self.effective_dose_gy
+                    efficiency = (actual_dose / target_dose) * 100 if target_dose > 0 else 0.0
+                    
+                    self.log.append(f"\n📊 Dose Verification:")
+                    self.log.append(f"  Target Dose: {target_dose:.2f} Gy")
+                    self.log.append(f"  Actual Dose: {actual_dose:.2f} Gy")
+                    self.log.append(f"  Efficiency: {efficiency:.1f}%")
+                except Exception as e:
+                    self.log.append(f"⚠️ Could not verify dose: {str(e)}")
 
             # === Export Data for ML Training ===
             try:
@@ -2769,21 +2908,15 @@ class FiberSimulationUI(QMainWindow):
 
                 if 'Cs-137' in source_text:
                     gamma_energy_MeV = 0.662
-                    self.log.append("☢️ Using Cs-137 source energy: 0.662 MeV")
                 elif 'Co-60' in source_text:
                     gamma_energy_MeV = 1.33
-                    self.log.append("☢️ Using Co-60 source energy: 1.33 MeV")
                 elif 'Am-241' in source_text:
                     gamma_energy_MeV = 0.0595
-                    self.log.append("☢️ Using Am-241 source energy: 0.0595 MeV")
                 elif 'Na-22' in source_text:
                     gamma_energy_MeV = 0.511
-                    self.log.append("☢️ Using Na-22 source energy: 0.511 MeV")
-                elif 'Thermal Neutrons' in source_text:
-                    gamma_energy_MeV = 0.0253e-6  # 0.0253 eV in MeV
-                    self.log.append("🌀 Using Thermal Neutrons energy: 0.0253 meV")
+                elif 'Thermal Neutron' in source_text:
+                    gamma_energy_MeV = 0.0253e-6
                 elif 'X-ray' in source_text or 'Custom' in source_text:
-                    # Use user input
                     try:
                         if hasattr(self.energy_input, 'value'):
                             gamma_energy_MeV = float(self.energy_input.value())
@@ -2792,18 +2925,14 @@ class FiberSimulationUI(QMainWindow):
                             gamma_energy_MeV = float(txt) if txt else 0.662
                     except ValueError:
                         gamma_energy_MeV = 0.662
-                        self.log.append("⚠️ Invalid custom energy → using 0.662 MeV")
-                    self.log.append(f"⚡ Using custom energy: {gamma_energy_MeV:.3f} MeV")
                 else:
                     gamma_energy_MeV = 0.662
-                    self.log.append("❓ Unknown source → defaulting to 0.662 MeV")
 
                 # Read number of events
                 try:
                     num_events = int(self.num_particles.text())
                 except:
-                    num_events = 500000
-                    self.log.append("⚠️ Invalid event count → using 500k")
+                    num_events = 50000
 
                 # Determine source type for export
                 if 'Cs-137' in source_text:
@@ -2814,24 +2943,26 @@ class FiberSimulationUI(QMainWindow):
                     source_type = 'Am241'
                 elif 'Na-22' in source_text:
                     source_type = 'Na22'
-                elif 'Thermal Neutrons' in source_text:
+                elif 'Thermal Neutron' in source_text:
                     source_type = 'Thermal Neutrons'
                 else:
                     source_type = 'Custom'
 
                 # Prepare data row
-                # At end of analyze_dose()
                 self.ml_training_features = {
                     'coating_thickness_nm': int(self.total_functional_thickness_nm),
                     'gamma_dose_kGy': float(self.effective_dose_kgy),
                     'photon_energy_MeV': float(gamma_energy_MeV),
                     'source_type': source_type,
                     'effective_delta_n': float(self.effective_delta_n),
-                   'timestamp': pd.Timestamp.now().isoformat()  # → "2026-01-05T14:37:22"
+                    'num_events': int(num_events), # Added for completeness
+                    'timestamp': pd.Timestamp.now().isoformat()
                 }
                 self.log.append("💡 Optical response not computed yet. Run 'Analyze Optical Response' to finalize ML data.")
+                
             except Exception as e:
-                self.log.append(f"❌ Failed to prepare ML  {str(e)}")
+                self.log.append(f"❌ Failed to prepare ML features: {str(e)}")
+                
         except Exception as e:
             self.log.append(f"💥 Dose analysis failed: {str(e)}")
             import traceback
